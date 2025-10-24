@@ -7508,14 +7508,16 @@ function App() {
             <div className="app-container">
               <style>{themeStyles}</style>
               <Routes>
+                {/* ✅ SOLO UNA RUTA PARA "/" */}
                 <Route path="/" element={<Login />} />
                 <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
                 <Route path="/clubs" element={<ProtectedRoute><ClubManagement /></ProtectedRoute>} />
                 <Route path="/tournaments" element={<ProtectedRoute><Tournaments /></ProtectedRoute>} />
                 <Route path="/tournament/:id" element={<ProtectedRoute><TournamentDetail /></ProtectedRoute>} />
                 <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
-                <Route path="*" element={<Navigate to="/" replace />} />
                 <Route path="/tournament/:id/play" element={<ProtectedRoute><TournamentPlay /></ProtectedRoute>} />
+                {/* ✅ Redirección para rutas no encontradas */}
+                <Route path="*" element={<Navigate to="/" replace />} />
               </Routes>
             </div>
           </Router>
