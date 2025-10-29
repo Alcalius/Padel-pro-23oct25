@@ -1490,7 +1490,6 @@ function Login() {
   );
 }
 
-// Componente de Navegación - SOLO BARRA INFERIOR
 // Componente de Navegación - SOLO BARRA INFERIOR CORREGIDA
 function Navigation() {
   const location = useLocation();
@@ -1732,8 +1731,8 @@ function Navigation() {
 }
 
 
-// Componentes placeholder para las demás rutas
 // Componente de Dashboard - VERSIÓN COMPLETA Y FUNCIONAL
+// Componente de Dashboard - VERSIÓN MEJORADA Y RESPONSIVE
 function Dashboard() {
   const { state, getters } = useApp();
   const [isLoading, setIsLoading] = useState(true);
@@ -1761,7 +1760,7 @@ function Dashboard() {
     loadData();
   }, [addToast]);
 
-  // Obtener partidos recientes del usuario
+  // Obtener partidos recientes del usuario - SOLO 3 PARTIDOS
   const getRecentMatches = () => {
     const matches = [];
     const userTournaments = getters.getTournamentsByClub();
@@ -1769,11 +1768,22 @@ function Dashboard() {
     userTournaments.forEach(tournament => {
       tournament.matches.forEach(match => {
         if (match.status === 'completed' && 
-            (match.team1.includes(state.currentUser?.id) || match.team2.includes(state.currentUser?.id))) {
+            (match.team1?.includes(state.currentUser?.id) || match.team2?.includes(state.currentUser?.id))) {
+          
+          // Determinar si el usuario ganó
+          const userTeam = match.team1?.includes(state.currentUser?.id) ? 'team1' : 'team2';
+          const userScore = userTeam === 'team1' ? match.scoreTeam1 : match.scoreTeam2;
+          const opponentScore = userTeam === 'team1' ? match.scoreTeam2 : match.scoreTeam1;
+          const won = userScore > opponentScore;
+
           matches.push({
             ...match,
             tournamentName: tournament.name,
-            date: match.createdAt
+            date: match.createdAt || tournament.createdAt,
+            userScore,
+            opponentScore,
+            won,
+            userTeam
           });
         }
       });
@@ -1781,118 +1791,190 @@ function Dashboard() {
 
     return matches
       .sort((a, b) => new Date(b.date) - new Date(a.date))
-      .slice(0, 3);
+      .slice(0, 3); // SOLO 3 PARTIDOS RECIENTES
   };
 
   // Calcular estadísticas globales mejoradas
-  const calculateEnhancedStats = () => {
-    if (!userStats) return null;
+// REEMPLAZA las funciones con estas versiones mejoradas para debug
 
-    const userTournaments = getters.getTournamentsByClub();
+const calculateEnhancedStats = () => {
+  const userTournaments = getters.getTournamentsByClub();
+  let totalMatches = 0;
+  let totalWins = 0;
+  let totalPoints = 0;
+
+  console.log('=== CALCULANDO ESTADÍSTICAS MEJORADAS ===');
+  console.log('Torneos encontrados:', userTournaments.length);
+  console.log('Usuario actual ID:', state.currentUser?.id);
+
+  userTournaments.forEach((tournament, tIndex) => {
+    console.log(`Torneo ${tIndex + 1}:`, tournament.name);
+    console.log('Partidos en torneo:', tournament.matches?.length || 0);
+    
+    tournament.matches?.forEach((match, mIndex) => {
+      console.log(`  Partido ${mIndex + 1}:`, {
+        status: match.status,
+        team1: match.team1,
+        team2: match.team2,
+        scores: `${match.scoreTeam1 || 0}-${match.scoreTeam2 || 0}`
+      });
+
+      // Verificar si el partido está completado
+      if (match.status !== 'completed') {
+        console.log(`  ❌ Partido ${mIndex + 1} no está completado`);
+        return;
+      }
+
+      // Verificar si el usuario actual participó
+      const userInTeam1 = Array.isArray(match.team1) 
+        ? match.team1.includes(state.currentUser?.id)
+        : false;
+      
+      const userInTeam2 = Array.isArray(match.team2)
+        ? match.team2.includes(state.currentUser?.id)  
+        : false;
+
+      console.log(`  Usuario en equipo1: ${userInTeam1}, en equipo2: ${userInTeam2}`);
+
+      if (userInTeam1 || userInTeam2) {
+        totalMatches++;
+        
+        const userTeam = userInTeam1 ? 'team1' : 'team2';
+        const userScore = userTeam === 'team1' ? (match.scoreTeam1 || 0) : (match.scoreTeam2 || 0);
+        const opponentScore = userTeam === 'team1' ? (match.scoreTeam2 || 0) : (match.scoreTeam1 || 0);
+        
+        totalPoints += userScore;
+        if (userScore > opponentScore) {
+          totalWins++;
+        }
+        
+        console.log(`  ✅ Partido contabilizado: ${userScore}-${opponentScore} - ${userScore > opponentScore ? 'GANADO' : 'PERDIDO'}`);
+      } else {
+        console.log(`  ❌ Usuario no participa en este partido`);
+      }
+    });
+  });
+
+  const winRate = totalMatches > 0 ? (totalWins / totalMatches) * 100 : 0;
+  const avgPointsPerMatch = totalMatches > 0 ? (totalPoints / totalMatches).toFixed(1) : 0;
+
+  const stats = {
+    totalMatches,
+    totalWins,
+    totalLosses: totalMatches - totalWins,
+    winRate: Math.round(winRate),
+    avgPointsPerMatch,
+    clubsCount: getters.getUserClubs().length,
+    tournamentsCount: userTournaments.length,
+    activeTournamentsCount: activeTournaments.filter(t => 
+      t.players?.includes(state.currentUser?.id) || 
+      t.guestPlayers?.some(guest => guest.includes(state.currentUser?.name))
+    ).length
+  };
+
+  console.log('=== ESTADÍSTICAS FINALES ===', stats);
+  return stats;
+};
+
+const calculateClubRanking = () => {
+  if (!activeClub || !activeClub.members) {
+    console.log('❌ No hay club activo o miembros');
+    return [];
+  }
+  
+  const memberStats = [];
+  const userTournaments = getters.getTournamentsByClub();
+  
+  console.log('=== CALCULANDO RANKING CLUB ===');
+  console.log('Club:', activeClub.name);
+  console.log('Miembros:', activeClub.members);
+  console.log('Torneos:', userTournaments.length);
+
+  activeClub.members.forEach(memberId => {
+    const member = state.users?.find(user => user.id === memberId);
+    if (!member) {
+      console.log(`❌ Miembro ${memberId} no encontrado en users`);
+      return;
+    }
+    
     let totalMatches = 0;
-    let totalWins = 0;
     let totalPoints = 0;
-
+    let totalWins = 0;
+    
+    console.log(`🔍 Analizando: ${member.name} (${memberId})`);
+    
     userTournaments.forEach(tournament => {
-      tournament.matches.forEach(match => {
-        if (match.status === 'completed' && 
-            (match.team1.includes(state.currentUser?.id) || match.team2.includes(state.currentUser?.id))) {
+      tournament.matches?.forEach(match => {
+        if (match.status !== 'completed') {
+          return;
+        }
+
+        const memberInTeam1 = Array.isArray(match.team1) 
+          ? match.team1.includes(memberId)
+          : false;
+        
+        const memberInTeam2 = Array.isArray(match.team2)
+          ? match.team2.includes(memberId)
+          : false;
+
+        if (memberInTeam1 || memberInTeam2) {
           totalMatches++;
           
-          const userTeam = match.team1.includes(state.currentUser?.id) ? 'team1' : 'team2';
-          const userScore = userTeam === 'team1' ? match.scoreTeam1 : match.scoreTeam2;
-          const opponentScore = userTeam === 'team1' ? match.scoreTeam2 : match.scoreTeam1;
+          const memberTeam = memberInTeam1 ? 'team1' : 'team2';
+          const memberScore = memberTeam === 'team1' ? (match.scoreTeam1 || 0) : (match.scoreTeam2 || 0);
+          const opponentScore = memberTeam === 'team1' ? (match.scoreTeam2 || 0) : (match.scoreTeam1 || 0);
           
-          totalPoints += userScore;
-          if (userScore > opponentScore) {
+          totalPoints += memberScore;
+          if (memberScore > opponentScore) {
             totalWins++;
           }
+          
+          console.log(`  ✅ ${member.name}: ${memberScore}-${opponentScore} - ${memberScore > opponentScore ? 'GANÓ' : 'PERDIÓ'}`);
         }
       });
     });
-
-    const winRate = totalMatches > 0 ? (totalWins / totalMatches) * 100 : 0;
+    
     const avgPointsPerMatch = totalMatches > 0 ? (totalPoints / totalMatches).toFixed(1) : 0;
-
-    return {
+    const winRate = totalMatches > 0 ? (totalWins / totalMatches) * 100 : 0;
+    
+    console.log(`📊 ${member.name}: ${totalMatches} partidos, ${avgPointsPerMatch} pts/partido, ${winRate}% victorias`);
+    
+    memberStats.push({
+      id: memberId,
+      name: member.name,
+      avatar: member.avatar,
+      profilePicture: member.profilePicture,
       totalMatches,
+      totalPoints,
       totalWins,
-      totalLosses: totalMatches - totalWins,
+      avgPointsPerMatch: parseFloat(avgPointsPerMatch),
       winRate: Math.round(winRate),
-      avgPointsPerMatch,
-      clubsCount: getters.getUserClubs().length,
-      tournamentsCount: userTournaments.length,
-      activeTournamentsCount: activeTournaments.filter(t => 
-        t.players.includes(state.currentUser?.id) || 
-        t.guestPlayers.some(guest => guest.includes(state.currentUser?.name))
-      ).length
-    };
-  };
-
-  // Calcular ranking de miembros del club
-  const calculateClubRanking = () => {
-    if (!activeClub) return [];
-    
-    const memberStats = [];
-    
-    activeClub.members.forEach(memberId => {
-      const member = state.users.find(user => user.id === memberId);
-      if (!member) return;
-      
-      let totalMatches = 0;
-      let totalPoints = 0;
-      let totalWins = 0;
-      
-      activeTournaments.forEach(tournament => {
-        tournament.matches.forEach(match => {
-          if (match.status === 'completed' && 
-              (match.team1.includes(memberId) || match.team2.includes(memberId))) {
-            totalMatches++;
-            
-            const userTeam = match.team1.includes(memberId) ? 'team1' : 'team2';
-            const userScore = userTeam === 'team1' ? match.scoreTeam1 : match.scoreTeam2;
-            const opponentScore = userTeam === 'team1' ? match.scoreTeam2 : match.scoreTeam1;
-            
-            totalPoints += userScore;
-            if (userScore > opponentScore) {
-              totalWins++;
-            }
-          }
-        });
-      });
-      
-      const avgPointsPerMatch = totalMatches > 0 ? (totalPoints / totalMatches).toFixed(1) : 0;
-      const winRate = totalMatches > 0 ? (totalWins / totalMatches) * 100 : 0;
-      
-      memberStats.push({
-        id: memberId,
-        name: member.name,
-        avatar: member.avatar,
-        profilePicture: member.profilePicture,
-        totalMatches,
-        totalPoints,
-        totalWins,
-        avgPointsPerMatch: parseFloat(avgPointsPerMatch),
-        winRate: Math.round(winRate),
-        isCurrentUser: memberId === state.currentUser?.id
-      });
+      isCurrentUser: memberId === state.currentUser?.id
     });
-    
-    return memberStats
-      .sort((a, b) => {
-        if (b.avgPointsPerMatch !== a.avgPointsPerMatch) {
-          return b.avgPointsPerMatch - a.avgPointsPerMatch;
-        }
-        return b.winRate - a.winRate;
-      })
-      .slice(0, 3);
-  };
+  });
+  
+  const sortedRanking = memberStats
+    .filter(player => player.totalMatches > 0)
+    .sort((a, b) => {
+      if (b.avgPointsPerMatch !== a.avgPointsPerMatch) {
+        return b.avgPointsPerMatch - a.avgPointsPerMatch;
+      }
+      return b.winRate - a.winRate;
+    })
+    .slice(0, 3);
+  
+  console.log('=== RANKING FINAL ===', sortedRanking);
+  return sortedRanking;
+};
+
+
+
 
   const enhancedStats = calculateEnhancedStats();
   const recentMatches = getRecentMatches();
   const topRanking = calculateClubRanking();
 
-  // Componente de Skeleton Loading
+  // Componente de Skeleton Loading (se mantiene igual)
   const DashboardSkeleton = () => (
     <div style={{ 
       minHeight: 'calc(100vh - 140px)',
@@ -1903,70 +1985,13 @@ function Dashboard() {
       width: '100%',
       boxSizing: 'border-box'
     }}>
-      <style>{`
-        @keyframes pulse-glow {
-          0%, 100% { opacity: 1; }
-          50% { opacity: 0.7; }
-        }
-        
-        .skeleton-pulse {
-          animation: pulse-glow 2s ease-in-out infinite;
-        }
-      `}</style>
-      
-      <div className="dashboard-container">
-        {/* Skeleton Header */}
-        <div style={{ marginBottom: '30px', width: '100%' }}>
-          <div className="skeleton skeleton-pulse" style={{
-            height: '40px',
-            width: '300px',
-            marginBottom: '12px',
-            borderRadius: 'var(--border-radius)'
-          }}></div>
-          <div className="skeleton skeleton-pulse" style={{
-            height: '20px',
-            width: '70%',
-            borderRadius: 'var(--border-radius)'
-          }}></div>
-        </div>
-
-        {/* Skeleton Grid */}
-        <div className="dashboard-grid" style={{ 
-          display: 'grid', 
-          gap: '24px', 
-          gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))',
-          width: '100%'
-        }}>
-          {[1, 2, 3, 4].map(i => (
-            <div key={i} className="glass-card" style={{ padding: '20px', width: '100%' }}>
-              <div className="skeleton skeleton-pulse" style={{
-                height: '20px',
-                width: '140px',
-                marginBottom: '20px',
-                borderRadius: 'var(--border-radius)'
-              }}></div>
-              <div className="skeleton skeleton-pulse" style={{
-                height: '60px',
-                marginBottom: '15px',
-                borderRadius: 'var(--border-radius)'
-              }}></div>
-              <div className="skeleton skeleton-pulse" style={{
-                height: '15px',
-                width: '80%',
-                borderRadius: 'var(--border-radius)'
-              }}></div>
-            </div>
-          ))}
-        </div>
-      </div>
+      {/* ... código del skeleton igual ... */}
     </div>
   );
 
   if (isLoading) {
     return <DashboardSkeleton />;
   }
-
-  
 
   return (
     <div style={{ 
@@ -1987,7 +2012,7 @@ function Dashboard() {
         .dashboard-grid {
           display: grid;
           grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-          gap: 24px;
+          gap: 20px;
           width: 100%;
         }
         
@@ -2004,13 +2029,135 @@ function Dashboard() {
           grid-column: span 1;
         }
         
+        .stats-card {
+          grid-column: span 2;
+        }
+        
+        .matches-card {
+          grid-column: span 1;
+        }
+        
+        /* Nuevos estilos para partidos recientes - MÁS COMPACTOS */
+        .match-item {
+          padding: 12px;
+          background: var(--bg-secondary);
+          border-radius: var(--border-radius);
+          border: 1px solid var(--border-color);
+          cursor: pointer;
+          transition: var(--transition);
+        }
+        
+        .match-item:hover {
+          transform: translateY(-1px);
+          box-shadow: var(--shadow-md);
+        }
+        
+        .match-result {
+          display: inline-flex;
+          align-items: center;
+          padding: 3px 8px;
+          border-radius: 6px;
+          font-size: 10px;
+          font-weight: 600;
+          margin-left: 6px;
+        }
+        
+        .match-won {
+          background: rgba(16, 185, 129, 0.2);
+          color: var(--secondary);
+        }
+        
+        .match-lost {
+          background: rgba(239, 68, 68, 0.2);
+          color: var(--error);
+        }
+        
+        .match-score {
+          font-size: 16px;
+          font-weight: 700;
+          color: var(--text-primary);
+          margin: 4px 0;
+        }
+        
+        .match-date {
+          font-size: 11px;
+          color: var(--text-muted);
+          display: flex;
+          align-items: center;
+          gap: 4px;
+        }
+        
+        /* Botones unificados */
+        .unified-button {
+          padding: 12px 20px;
+          border: none;
+          background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+          color: white;
+          border-radius: var(--border-radius);
+          font-weight: 600;
+          cursor: pointer;
+          transition: var(--transition);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 8px;
+          box-shadow: var(--shadow);
+          font-size: 14px;
+          width: 100%;
+          text-decoration: none;
+          min-height: 44px;
+        }
+        
+        .unified-button:hover {
+          transform: translateY(-2px);
+          box-shadow: var(--shadow-lg);
+        }
+        
+        .unified-button-outline {
+          padding: 10px 16px;
+          border: 2px solid var(--border-color-strong);
+          background: transparent;
+          color: var(--text-primary);
+          border-radius: var(--border-radius);
+          font-weight: 600;
+          cursor: pointer;
+          transition: var(--transition);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 6px;
+          font-size: 12px;
+          width: 100%;
+          text-decoration: none;
+        }
+        
+        .unified-button-outline:hover {
+          border-color: var(--primary);
+          color: var(--primary);
+          background: rgba(99, 102, 241, 0.05);
+        }
+        
         @media (max-width: 768px) {
           .dashboard-grid {
             grid-template-columns: 1fr;
+            gap: 16px;
           }
           
-          .club-card {
+          .club-card,
+          .stats-card,
+          .ranking-card,
+          .matches-card {
             grid-column: span 1;
+          }
+          
+          .dashboard-container {
+            padding: 0 8px;
+          }
+        }
+        
+        @media (max-width: 480px) {
+          .dashboard-grid {
+            gap: 12px;
           }
         }
       `}</style>
@@ -2018,24 +2165,24 @@ function Dashboard() {
       <div className="dashboard-container">
         {/* Header del Dashboard */}
         <div className={`animate-fadeInUp ${contentLoaded ? 'animate-fadeInUp' : ''}`} style={{ 
-          marginBottom: '30px',
+          marginBottom: '25px',
           width: '100%'
         }}>
           <h1 style={{ 
-            fontSize: '28px', 
+            fontSize: '24px', 
             fontWeight: '700', 
             color: 'var(--text-primary)',
-            marginBottom: '8px',
+            marginBottom: '6px',
             display: 'flex',
             alignItems: 'center',
-            gap: '12px'
+            gap: '10px'
           }}>
-            <Icon name="home" size={28} color="var(--primary)" />
+            <Icon name="home" size={24} color="var(--primary)" />
             Mi Dashboard
           </h1>
           <p style={{ 
             color: 'var(--text-secondary)',
-            fontSize: '16px',
+            fontSize: '14px',
             lineHeight: '1.4'
           }}>
             {activeClub 
@@ -2045,172 +2192,460 @@ function Dashboard() {
           </p>
         </div>
 
-        {/* Grid Principal */}
+        {/* Grid Principal REORGANIZADO Y MEJORADO */}
         <div className={`dashboard-grid animate-stagger ${contentLoaded ? 'animate-stagger' : ''}`}>
           
-          {/* 1. MIS ESTADÍSTICAS */}
-          {enhancedStats && (
-            <div className="glass-card dashboard-card hover-lift" style={{ 
-              padding: '24px',
+          {/* 1. MIS ESTADÍSTICAS - 2x2 GRID */}
+          <div className="glass-card dashboard-card stats-card hover-lift" style={{ 
+            padding: '20px',
+            width: '100%',
+            boxSizing: 'border-box',
+            animationDelay: '0.1s'
+          }}>
+            <h2 style={{ 
+              color: 'var(--text-primary)', 
+              marginBottom: '18px',
+              fontSize: '18px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px'
+            }}>
+              <Icon name="stats" size={18} color="var(--primary)" />
+              Mis Estadísticas
+            </h2>
+            
+            <div style={{ 
+              display: 'grid', 
+              gridTemplateColumns: '1fr 1fr', 
+              gap: '12px'
+            }}>
+              <div className="animate-scaleIn" style={{ 
+                background: 'rgba(99, 102, 241, 0.1)',
+                padding: '14px',
+                borderRadius: 'var(--border-radius)',
+                textAlign: 'center',
+                animation: 'scaleIn 0.5s ease-out',
+                animationDelay: '0.2s',
+                borderLeft: '4px solid var(--primary)'
+              }}>
+                <div style={{ 
+                  fontSize: '20px', 
+                  fontWeight: '700', 
+                  color: 'var(--primary)',
+                  marginBottom: '4px'
+                }}>
+                  {enhancedStats.totalMatches}
+                </div>
+                <div style={{ 
+                  fontSize: '11px', 
+                  color: 'var(--text-secondary)',
+                  fontWeight: '600'
+                }}>
+                  Partidos Totales
+                </div>
+              </div>
+              
+              <div className="animate-scaleIn" style={{ 
+                background: 'rgba(16, 185, 129, 0.1)',
+                padding: '14px',
+                borderRadius: 'var(--border-radius)',
+                textAlign: 'center',
+                animation: 'scaleIn 0.5s ease-out',
+                animationDelay: '0.3s',
+                borderLeft: '4px solid var(--secondary)'
+              }}>
+                <div style={{ 
+                  fontSize: '20px', 
+                  fontWeight: '700', 
+                  color: 'var(--secondary)',
+                  marginBottom: '4px'
+                }}>
+                  {enhancedStats.winRate}%
+                </div>
+                <div style={{ 
+                  fontSize: '11px', 
+                  color: 'var(--text-secondary)',
+                  fontWeight: '600'
+                }}>
+                  Tasa de Victorias
+                </div>
+              </div>
+              
+              <div className="animate-scaleIn" style={{ 
+                background: 'rgba(245, 158, 11, 0.1)',
+                padding: '14px',
+                borderRadius: 'var(--border-radius)',
+                textAlign: 'center',
+                animation: 'scaleIn 0.5s ease-out',
+                animationDelay: '0.4s',
+                borderLeft: '4px solid var(--accent)'
+              }}>
+                <div style={{ 
+                  fontSize: '20px', 
+                  fontWeight: '700', 
+                  color: 'var(--accent)',
+                  marginBottom: '4px'
+                }}>
+                  {enhancedStats.avgPointsPerMatch}
+                </div>
+                <div style={{ 
+                  fontSize: '11px', 
+                  color: 'var(--text-secondary)',
+                  fontWeight: '600'
+                }}>
+                  Puntos/Partido
+                </div>
+              </div>
+              
+              <div className="animate-scaleIn" style={{ 
+                background: 'rgba(139, 92, 246, 0.1)',
+                padding: '14px',
+                borderRadius: 'var(--border-radius)',
+                textAlign: 'center',
+                animation: 'scaleIn 0.5s ease-out',
+                animationDelay: '0.5s',
+                borderLeft: '4px solid #8b5cf6'
+              }}>
+                <div style={{ 
+                  fontSize: '20px', 
+                  fontWeight: '700', 
+                  color: '#8b5cf6',
+                  marginBottom: '4px'
+                }}>
+                  {enhancedStats.activeTournamentsCount}
+                </div>
+                <div style={{ 
+                  fontSize: '11px', 
+                  color: 'var(--text-secondary)',
+                  fontWeight: '600'
+                }}>
+                  Torneos Activos
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* 2. TOP RANKING DEL CLUB */}
+          {activeClub && (
+            <div className="glass-card dashboard-card ranking-card hover-lift" style={{ 
+              padding: '20px',
               width: '100%',
               boxSizing: 'border-box',
-              animationDelay: '0.1s'
+              animationDelay: '0.2s'
             }}>
-              <h2 style={{ 
-                color: 'var(--text-primary)', 
-                marginBottom: '20px',
-                fontSize: '20px',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '10px'
-              }}>
-                <Icon name="stats" size={20} color="var(--primary)" />
-                Mis Estadísticas
-              </h2>
-              
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-                <div className="animate-scaleIn" style={{ 
-                  background: 'rgba(99, 102, 241, 0.1)',
-                  padding: '16px',
-                  borderRadius: 'var(--border-radius)',
-                  textAlign: 'center',
-                  animation: 'scaleIn 0.5s ease-out',
-                  animationDelay: '0.2s',
-                  borderLeft: '4px solid var(--primary)'
-                }}>
-                  <div style={{ 
-                    fontSize: '24px', 
-                    fontWeight: '700', 
-                    color: 'var(--primary)',
-                    marginBottom: '6px'
-                  }}>
-                    {enhancedStats.totalMatches}
-                  </div>
-                  <div style={{ 
-                    fontSize: '12px', 
-                    color: 'var(--text-secondary)',
-                    fontWeight: '600'
-                  }}>
-                    Partidos Totales
-                  </div>
-                </div>
-                
-                <div className="animate-scaleIn" style={{ 
-                  background: 'rgba(16, 185, 129, 0.1)',
-                  padding: '16px',
-                  borderRadius: 'var(--border-radius)',
-                  textAlign: 'center',
-                  animation: 'scaleIn 0.5s ease-out',
-                  animationDelay: '0.3s',
-                  borderLeft: '4px solid var(--secondary)'
-                }}>
-                  <div style={{ 
-                    fontSize: '24px', 
-                    fontWeight: '700', 
-                    color: 'var(--secondary)',
-                    marginBottom: '6px'
-                  }}>
-                    {enhancedStats.winRate}%
-                  </div>
-                  <div style={{ 
-                    fontSize: '12px', 
-                    color: 'var(--text-secondary)',
-                    fontWeight: '600'
-                  }}>
-                    Tasa de Victorias
-                  </div>
-                </div>
-                
-                <div className="animate-scaleIn" style={{ 
-                  background: 'rgba(245, 158, 11, 0.1)',
-                  padding: '16px',
-                  borderRadius: 'var(--border-radius)',
-                  textAlign: 'center',
-                  animation: 'scaleIn 0.5s ease-out',
-                  animationDelay: '0.4s',
-                  borderLeft: '4px solid var(--accent)'
-                }}>
-                  <div style={{ 
-                    fontSize: '24px', 
-                    fontWeight: '700', 
-                    color: 'var(--accent)',
-                    marginBottom: '6px'
-                  }}>
-                    {enhancedStats.avgPointsPerMatch}
-                  </div>
-                  <div style={{ 
-                    fontSize: '12px', 
-                    color: 'var(--text-secondary)',
-                    fontWeight: '600'
-                  }}>
-                    Puntos/Partido
-                  </div>
-                </div>
-                
-                <div className="animate-scaleIn" style={{ 
-                  background: 'rgba(139, 92, 246, 0.1)',
-                  padding: '16px',
-                  borderRadius: 'var(--border-radius)',
-                  textAlign: 'center',
-                  animation: 'scaleIn 0.5s ease-out',
-                  animationDelay: '0.5s',
-                  borderLeft: '4px solid #8b5cf6'
-                }}>
-                  <div style={{ 
-                    fontSize: '24px', 
-                    fontWeight: '700', 
-                    color: '#8b5cf6',
-                    marginBottom: '6px'
-                  }}>
-                    {enhancedStats.activeTournamentsCount}
-                  </div>
-                  <div style={{ 
-                    fontSize: '12px', 
-                    color: 'var(--text-secondary)',
-                    fontWeight: '600'
-                  }}>
-                    Torneos Activos
-                  </div>
-                </div>
-              </div>
-
-              {/* Acción rápida */}
               <div style={{ 
+                display: 'flex', 
+                justifyContent: 'space-between', 
+                alignItems: 'center',
+                marginBottom: '18px'
               }}>
+                <h2 style={{ 
+                  color: 'var(--text-primary)', 
+                  margin: 0,
+                  fontSize: '18px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px'
+                }}>
+                  <Icon name="trophy" size={18} color="var(--accent)" />
+                  Top Ranking
+                </h2>
+                <span style={{ 
+                  background: 'var(--accent)', 
+                  color: 'white',
+                  padding: '3px 8px',
+                  borderRadius: '10px',
+                  fontSize: '11px',
+                  fontWeight: '600'
+                }}>
+                  Top 3
+                </span>
               </div>
+              
+              {topRanking.length === 0 ? (
+                <div style={{ 
+                  textAlign: 'center', 
+                  padding: '25px 15px',
+                  color: 'var(--text-secondary)'
+                }}>
+                  <Icon name="users" size={40} color="var(--border-color)" />
+                  <p style={{ margin: '12px 0 0 0', fontSize: '13px' }}>
+                    No hay datos de ranking disponibles
+                  </p>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  {topRanking.map((player, index) => {
+                    const medal = index === 0 ? '🥇' : index === 1 ? '🥈' : '🥉';
+                    const isCurrentUser = player.isCurrentUser;
+                    
+                    return (
+                      <div key={player.id} className="animate-fadeInUp" style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '10px',
+                        padding: '10px',
+                        background: isCurrentUser ? 'rgba(99, 102, 241, 0.1)' : 'var(--card-bg)',
+                        borderRadius: 'var(--border-radius)',
+                        border: isCurrentUser ? '2px solid var(--primary)' : '1px solid var(--border-color)',
+                        animationDelay: `${0.3 + index * 0.1}s`
+                      }}>
+                        {/* Medalla/Número */}
+                        <div style={{
+                          width: '28px',
+                          height: '28px',
+                          borderRadius: '50%',
+                          background: index === 0 ? 'linear-gradient(135deg, #f59e0b, #d97706)' : 
+                                      index === 1 ? 'linear-gradient(135deg, #9ca3af, #6b7280)' : 
+                                      'linear-gradient(135deg, #b45309, #92400e)',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          color: 'white',
+                          fontWeight: '700',
+                          fontSize: '12px',
+                          flexShrink: 0
+                        }}>
+                          {medal}
+                        </div>
+
+                        {/* Avatar */}
+                        <div style={{
+                          width: '32px',
+                          height: '32px',
+                          borderRadius: '50%',
+                          background: player.profilePicture ? 
+                            `url(${player.profilePicture}) center/cover` :
+                            'linear-gradient(135deg, var(--primary), var(--primary-dark))',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          color: 'white',
+                          fontSize: player.profilePicture ? '0' : '12px',
+                          fontWeight: '600',
+                          border: '2px solid var(--card-bg)',
+                          flexShrink: 0
+                        }}>
+                          {!player.profilePicture && player.avatar}
+                        </div>
+
+                        {/* Información del Jugador */}
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ 
+                            display: 'flex', 
+                            alignItems: 'center', 
+                            gap: '4px',
+                            marginBottom: '2px'
+                          }}>
+                            <span style={{ 
+                              color: 'var(--text-primary)', 
+                              fontWeight: '600',
+                              fontSize: '13px',
+                              whiteSpace: 'nowrap',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis'
+                            }}>
+                              {player.name}
+                            </span>
+                            {isCurrentUser && (
+                              <span style={{ 
+                                background: 'var(--primary)', 
+                                color: 'white',
+                                padding: '1px 4px',
+                                borderRadius: '6px',
+                                fontSize: '9px',
+                                fontWeight: '600'
+                              }}>
+                                Tú
+                              </span>
+                            )}
+                          </div>
+                          <div style={{ 
+                            display: 'flex', 
+                            gap: '6px',
+                            fontSize: '10px',
+                            color: 'var(--text-muted)',
+                            flexWrap: 'wrap'
+                          }}>
+                            <span style={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
+                              <Icon name="target" size={9} color="var(--text-muted)" />
+                              {player.avgPointsPerMatch} pts/partido
+                            </span>
+                            <span style={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
+                              <Icon name="stats" size={9} color="var(--text-muted)" />
+                              {player.winRate}% victorias
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Puntuación destacada */}
+                        <div style={{
+                          background: 'var(--primary)',
+                          color: 'white',
+                          padding: '4px 8px',
+                          borderRadius: '6px',
+                          fontSize: '11px',
+                          fontWeight: '700',
+                          flexShrink: 0
+                        }}>
+                          #{index + 1}
+                        </div>
+                      </div>
+                    );
+                  })}
+                  
+                  {/* Link para ver ranking completo */}
+                  <div style={{ 
+                    textAlign: 'center',
+                    marginTop: '6px'
+                  }}>
+                    <button
+                      onClick={() => navigateWithTransition('/ranking')}
+                      className="unified-button-outline"
+                    >
+                      <Icon name="stats" size={12} color="var(--primary)" />
+                      Ver ranking completo
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
-          {/* 2. TORNEOS ACTIVOS */}
-          <div className="glass-card dashboard-card hover-lift" style={{ 
-            padding: '24px',
+          {/* 3. PARTIDOS RECIENTES - MÁS COMPACTOS */}
+          <div className="glass-card dashboard-card matches-card hover-lift" style={{ 
+            padding: '20px',
             width: '100%',
             boxSizing: 'border-box',
-            animationDelay: '0.2s'
+            animationDelay: '0.3s'
           }}>
             <div style={{ 
               display: 'flex', 
               justifyContent: 'space-between', 
               alignItems: 'center',
-              marginBottom: '20px'
+              marginBottom: '18px'
             }}>
               <h2 style={{ 
                 color: 'var(--text-primary)', 
                 margin: 0,
-                fontSize: '20px',
+                fontSize: '18px',
                 display: 'flex',
                 alignItems: 'center',
-                gap: '10px'
+                gap: '8px'
               }}>
-                <Icon name="trophy" size={20} color="var(--primary)" />
+                <Icon name="history" size={18} color="var(--primary)" />
+                Partidos Recientes
+              </h2>
+              <span style={{ 
+                background: 'var(--primary)', 
+                color: 'white',
+                padding: '3px 8px',
+                borderRadius: '10px',
+                fontSize: '11px',
+                fontWeight: '600'
+              }}>
+                {recentMatches.length}
+              </span>
+            </div>
+
+            {recentMatches.length === 0 ? (
+              <div style={{ 
+                textAlign: 'center', 
+                padding: '25px 15px',
+                color: 'var(--text-secondary)'
+              }}>
+                <Icon name="play" size={40} color="var(--border-color)" />
+                <p style={{ margin: '12px 0 0 0', fontSize: '13px' }}>
+                  No hay partidos recientes
+                </p>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {recentMatches.map((match, index) => (
+                  <div 
+                    key={match.id} 
+                    className="match-item animate-fadeInUp"
+                    onClick={() => navigateWithTransition(`/tournament/${match.tournamentId}`)}
+                    style={{ animationDelay: `${0.4 + index * 0.1}s` }}
+                  >
+                    <div style={{ 
+                      display: 'flex', 
+                      justifyContent: 'space-between', 
+                      alignItems: 'flex-start',
+                      marginBottom: '4px'
+                    }}>
+                      <div style={{ 
+                        color: 'var(--text-primary)', 
+                        fontSize: '13px',
+                        fontWeight: '600',
+                        lineHeight: '1.3',
+                        flex: 1
+                      }}>
+                        {match.tournamentName}
+                      </div>
+                      <span className={`match-result ${match.won ? 'match-won' : 'match-lost'}`}>
+                        {match.won ? 'VICTORIA' : 'DERROTA'}
+                      </span>
+                    </div>
+                    
+                    <div className="match-score">
+                      {match.userScore} - {match.opponentScore}
+                    </div>
+                    
+                    <div className="match-date">
+                      <Icon name="calendar" size={10} color="var(--text-muted)" />
+                      {new Date(match.date).toLocaleDateString()}
+                    </div>
+                  </div>
+                ))}
+                
+                {/* Botón para ver más partidos en Perfil */}
+                <div style={{ 
+                  textAlign: 'center',
+                  marginTop: '8px'
+                }}>
+                  <button
+                    onClick={() => navigateWithTransition('/profile')}
+                    className="unified-button-outline"
+                  >
+                    <Icon name="profile" size={12} color="var(--primary)" />
+                    Ver más en Perfil
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* 4. TORNEOS ACTIVOS */}
+          <div className="glass-card dashboard-card hover-lift" style={{ 
+            padding: '20px',
+            width: '100%',
+            boxSizing: 'border-box',
+            animationDelay: '0.4s'
+          }}>
+            <div style={{ 
+              display: 'flex', 
+              justifyContent: 'space-between', 
+              alignItems: 'center',
+              marginBottom: '18px'
+            }}>
+              <h2 style={{ 
+                color: 'var(--text-primary)', 
+                margin: 0,
+                fontSize: '18px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px'
+              }}>
+                <Icon name="trophy" size={18} color="var(--primary)" />
                 Torneos Activos
               </h2>
               <span style={{ 
                 background: 'var(--primary)', 
                 color: 'white',
-                padding: '4px 10px',
-                borderRadius: '12px',
-                fontSize: '12px',
+                padding: '3px 8px',
+                borderRadius: '10px',
+                fontSize: '11px',
                 fontWeight: '600'
               }}>
                 {activeTournaments.length}
@@ -2220,36 +2655,31 @@ function Dashboard() {
             {activeTournaments.length === 0 ? (
               <div style={{ 
                 textAlign: 'center', 
-                padding: '30px 20px',
+                padding: '25px 15px',
                 color: 'var(--text-secondary)'
               }}>
-                <Icon name="trophy" size={48} color="var(--border-color)" />
-                <p style={{ margin: '16px 0 0 0', fontSize: '14px' }}>
+                <Icon name="tournament" size={40} color="var(--border-color)" />
+                <p style={{ margin: '12px 0 0 0', fontSize: '13px' }}>
                   No hay torneos activos
                 </p>
                 <button
                   onClick={() => navigateWithTransition('/tournaments')}
-                  className="btn-primary"
-                  style={{ 
-                    marginTop: '16px',
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: '8px'
-                  }}
+                  className="unified-button"
+                  style={{ marginTop: '12px' }}
                 >
-                  <Icon name="add" size={16} color="white" />
+                  <Icon name="add" size={14} color="white" />
                   Crear Primer Torneo
                 </button>
               </div>
             ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                 {activeTournaments.slice(0, 3).map((tournament, index) => (
                   <div key={tournament.id} className="animate-fadeInUp" style={{
-                    padding: '16px',
+                    padding: '12px',
                     background: 'var(--bg-secondary)',
                     borderRadius: 'var(--border-radius)',
                     border: '1px solid var(--border-color)',
-                    animationDelay: `${0.3 + index * 0.1}s`,
+                    animationDelay: `${0.5 + index * 0.1}s`,
                     cursor: 'pointer'
                   }}
                   onClick={() => navigateWithTransition(`/tournament/${tournament.id}`)}
@@ -2258,22 +2688,23 @@ function Dashboard() {
                       display: 'flex', 
                       justifyContent: 'space-between', 
                       alignItems: 'flex-start',
-                      marginBottom: '8px'
+                      marginBottom: '6px'
                     }}>
                       <h3 style={{ 
                         color: 'var(--text-primary)', 
                         margin: 0,
-                        fontSize: '16px',
-                        fontWeight: '600'
+                        fontSize: '14px',
+                        fontWeight: '600',
+                        lineHeight: '1.3'
                       }}>
                         {tournament.name}
                       </h3>
                       <span style={{ 
                         background: 'var(--secondary)', 
                         color: 'white',
-                        padding: '2px 8px',
-                        borderRadius: '8px',
-                        fontSize: '10px',
+                        padding: '2px 6px',
+                        borderRadius: '6px',
+                        fontSize: '9px',
                         fontWeight: '600'
                       }}>
                         Activo
@@ -2281,17 +2712,17 @@ function Dashboard() {
                     </div>
                     <div style={{ 
                       display: 'flex', 
-                      gap: '12px',
-                      fontSize: '12px',
+                      gap: '10px',
+                      fontSize: '11px',
                       color: 'var(--text-muted)'
                     }}>
-                      <span>
-                        <Icon name="users" size={12} color="var(--text-muted)" />
-                        {' '}{tournament.players.length + tournament.guestPlayers.length} jugadores
+                      <span style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
+                        <Icon name="users" size={10} color="var(--text-muted)" />
+                        {tournament.players?.length + tournament.guestPlayers?.length} jugadores
                       </span>
-                      <span>
-                        <Icon name="calendar" size={12} color="var(--text-muted)" />
-                        {' '}{new Date(tournament.createdAt).toLocaleDateString()}
+                      <span style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
+                        <Icon name="calendar" size={10} color="var(--text-muted)" />
+                        {new Date(tournament.createdAt).toLocaleDateString()}
                       </span>
                     </div>
                   </div>
@@ -2300,17 +2731,9 @@ function Dashboard() {
                 {activeTournaments.length > 3 && (
                   <button
                     onClick={() => navigateWithTransition('/tournaments')}
-                    className="btn-outline"
-                    style={{ 
-                      width: '100%',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: '8px',
-                      marginTop: '8px'
-                    }}
+                    className="unified-button-outline"
                   >
-                    <Icon name="trophy" size={16} color="var(--primary)" />
+                    <Icon name="trophy" size={12} color="var(--primary)" />
                     Ver Todos los Torneos ({activeTournaments.length})
                   </button>
                 )}
@@ -2318,204 +2741,39 @@ function Dashboard() {
             )}
           </div>
 
-          {/* 3. TOP RANKING DEL CLUB */}
-          {activeClub && topRanking.length > 0 && (
-            <div className="glass-card dashboard-card ranking-card hover-lift" style={{ 
-              padding: '24px',
-              width: '100%',
-              boxSizing: 'border-box',
-              animationDelay: '0.3s'
-            }}>
-              <h2 style={{ 
-                color: 'var(--text-primary)', 
-                marginBottom: '20px',
-                fontSize: '20px',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '10px'
-              }}>
-                <Icon name="trophy" size={20} color="var(--accent)" />
-                Top Ranking
-              </h2>
-              
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                {topRanking.map((player, index) => {
-                  const medal = index === 0 ? '🥇' : index === 1 ? '🥈' : '🥉';
-                  const isCurrentUser = player.isCurrentUser;
-                  
-                  return (
-                    <div key={player.id} className="animate-fadeInUp" style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '12px',
-                      padding: '12px',
-                      background: isCurrentUser ? 'rgba(99, 102, 241, 0.1)' : 'var(--card-bg)',
-                      borderRadius: 'var(--border-radius)',
-                      border: isCurrentUser ? '2px solid var(--primary)' : '1px solid var(--border-color)',
-                      animationDelay: `${0.4 + index * 0.1}s`
-                    }}>
-                      {/* Medalla/Número */}
-                      <div style={{
-                        width: '32px',
-                        height: '32px',
-                        borderRadius: '50%',
-                        background: index === 0 ? 'linear-gradient(135deg, #f59e0b, #d97706)' : 
-                                    index === 1 ? 'linear-gradient(135deg, #9ca3af, #6b7280)' : 
-                                    'linear-gradient(135deg, #b45309, #92400e)',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        color: 'white',
-                        fontWeight: '700',
-                        fontSize: '14px',
-                        flexShrink: 0
-                      }}>
-                        {medal}
-                      </div>
-
-                      {/* Avatar */}
-                      <div style={{
-                        width: '36px',
-                        height: '36px',
-                        borderRadius: '50%',
-                        background: player.profilePicture ? 
-                          `url(${player.profilePicture}) center/cover` :
-                          'linear-gradient(135deg, var(--primary), var(--primary-dark))',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        color: 'white',
-                        fontSize: player.profilePicture ? '0' : '14px',
-                        fontWeight: '600',
-                        border: '2px solid var(--card-bg)',
-                        flexShrink: 0
-                      }}>
-                        {!player.profilePicture && player.avatar}
-                      </div>
-
-                      {/* Información del Jugador */}
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ 
-                          display: 'flex', 
-                          alignItems: 'center', 
-                          gap: '6px',
-                          marginBottom: '4px'
-                        }}>
-                          <span style={{ 
-                            color: 'var(--text-primary)', 
-                            fontWeight: '600',
-                            fontSize: '14px',
-                            whiteSpace: 'nowrap',
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis'
-                          }}>
-                            {player.name}
-                          </span>
-                          {isCurrentUser && (
-                            <span style={{ 
-                              background: 'var(--primary)', 
-                              color: 'white',
-                              padding: '2px 6px',
-                              borderRadius: '8px',
-                              fontSize: '10px',
-                              fontWeight: '600'
-                            }}>
-                              Tú
-                            </span>
-                          )}
-                        </div>
-                        <div style={{ 
-                          display: 'flex', 
-                          gap: '8px',
-                          fontSize: '11px',
-                          color: 'var(--text-muted)',
-                          flexWrap: 'wrap'
-                        }}>
-                          <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-  <Icon name="target" size={10} color="var(--text-muted)" />
-  {player.avgPointsPerMatch} pts/partido
-</span>
-<span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-  <Icon name="stats" size={10} color="var(--text-muted)" />
-  {player.winRate}% victorias
-</span>
-                        </div>
-                      </div>
-
-                      {/* Puntuación destacada */}
-                      <div style={{
-                        background: 'var(--primary)',
-                        color: 'white',
-                        padding: '6px 10px',
-                        borderRadius: '8px',
-                        fontSize: '12px',
-                        fontWeight: '700',
-                        flexShrink: 0
-                      }}>
-                        #{index + 1}
-                      </div>
-                    </div>
-                  );
-                })}
-                
-                {/* Link para ver ranking completo */}
-                <div style={{ 
-                  textAlign: 'center',
-                  marginTop: '8px'
-                }}>
-                  <button
-                    onClick={() => navigateWithTransition('/tournaments')}
-                    className="btn-outline"
-                    style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: '6px',
-                      borderRadius: '8px',
-                      fontSize: '12px',
-                      padding: '8px 16px'
-                    }}
-                  >
-                    <Icon name="stats" size={14} color="var(--primary)" />
-                    Ver ranking completo
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* 4. CLUB ACTIVO */}
+          {/* 5. CLUB ACTIVO */}
           {activeClub && (
             <div className="glass-card dashboard-card club-card hover-lift" style={{ 
-              padding: '24px',
+              padding: '20px',
               width: '100%',
               boxSizing: 'border-box',
-              animationDelay: '0.4s'
+              animationDelay: '0.5s'
             }}>
               <div style={{ 
                 display: 'flex', 
                 justifyContent: 'space-between', 
                 alignItems: 'flex-start',
-                marginBottom: '20px',
+                marginBottom: '18px',
                 flexWrap: 'wrap',
-                gap: '10px'
+                gap: '8px'
               }}>
                 <h2 style={{ 
                   color: 'var(--text-primary)', 
                   margin: '0',
-                  fontSize: '20px',
+                  fontSize: '18px',
                   display: 'flex',
                   alignItems: 'center',
-                  gap: '10px'
+                  gap: '8px'
                 }}>
-                  <Icon name="club" size={20} color="var(--primary)" />
+                  <Icon name="club" size={18} color="var(--primary)" />
                   Club Activo
                 </h2>
                 <span style={{ 
                   background: 'var(--secondary)', 
                   color: 'white',
-                  padding: '4px 10px',
-                  borderRadius: '10px',
-                  fontSize: '11px',
+                  padding: '3px 8px',
+                  borderRadius: '8px',
+                  fontSize: '10px',
                   fontWeight: '600',
                   whiteSpace: 'nowrap'
                 }}>
@@ -2526,37 +2784,37 @@ function Dashboard() {
               <div style={{ 
                 display: 'flex', 
                 flexDirection: 'column',
-                gap: '20px'
+                gap: '16px'
               }}>
                 <div className="animate-bounceIn" style={{
-                  width: '60px',
-                  height: '60px',
+                  width: '50px',
+                  height: '50px',
                   background: 'linear-gradient(135deg, var(--primary), var(--primary-dark))',
-                  borderRadius: '12px',
+                  borderRadius: '10px',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  fontSize: '24px',
+                  fontSize: '20px',
                   color: 'white',
                   alignSelf: 'center',
                   animation: 'bounceIn 0.6s ease-out'
                 }}>
-                  <Icon name="club" size={24} color="white" />
+                  <Icon name="club" size={20} color="white" />
                 </div>
                 
                 <div style={{ textAlign: 'center' }}>
                   <h3 style={{ 
                     color: 'var(--text-primary)', 
-                    margin: '0 0 8px 0',
-                    fontSize: '18px',
+                    margin: '0 0 6px 0',
+                    fontSize: '16px',
                     fontWeight: '700'
                   }}>
                     {activeClub.name}
                   </h3>
                   <p style={{ 
                     color: 'var(--text-secondary)', 
-                    margin: '0 0 16px 0',
-                    fontSize: '14px',
+                    margin: '0 0 12px 0',
+                    fontSize: '13px',
                     lineHeight: '1.4'
                   }}>
                     {activeClub.description || 'Sin descripción disponible'}
@@ -2564,200 +2822,37 @@ function Dashboard() {
                   <div style={{ 
                     display: 'flex', 
                     flexDirection: 'column',
-                    gap: '8px',
-                    fontSize: '12px',
+                    gap: '6px',
+                    fontSize: '11px',
                     color: 'var(--text-muted)',
                     alignItems: 'center'
                   }}>
-                    <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                      <Icon name="users" size={12} color="var(--text-muted)" />
+                    <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                      <Icon name="users" size={10} color="var(--text-muted)" />
                       {activeClub.members?.length || 0} miembros
                     </span>
-                    <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                      <Icon name="tournament" size={12} color="var(--text-muted)" />
+                    <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                      <Icon name="tournament" size={10} color="var(--text-muted)" />
                       {activeTournaments.length} torneos activos
                     </span>
-                    <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                      <Icon name="calendar" size={12} color="var(--text-muted)" />
+                    <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                      <Icon name="calendar" size={10} color="var(--text-muted)" />
                       Creado {new Date(activeClub.createdAt).toLocaleDateString()}
                     </span>
                   </div>
                 </div>
                 
-<button
-  onClick={() => navigateWithTransition('/clubs')}
-  style={{ 
-    padding: '14px',
-    border: 'none',
-    background: 'linear-gradient(135deg, var(--primary), var(--primary-dark))',
-    color: 'white',
-    borderRadius: 'var(--border-radius)',
-    fontWeight: '600',
-    cursor: 'pointer',
-    transition: 'var(--transition)',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: '10px',
-    boxShadow: 'var(--shadow)',
-    fontSize: '16px',
-    width: '100%',
-    textDecoration: 'none'
-  }}
-  onMouseOver={(e) => {
-    e.target.style.transform = 'translateY(-2px)';
-    e.target.style.boxShadow = 'var(--shadow-lg)';
-  }}
-  onMouseOut={(e) => {
-    e.target.style.transform = 'translateY(0)';
-    e.target.style.boxShadow = 'var(--shadow)';
-  }}
->
-  <Icon name="settings" size={18} color="white" />
-  Gestionar Club
-</button>              </div>
+                <button
+                  onClick={() => navigateWithTransition('/clubs')}
+                  className="unified-button"
+                >
+                  <Icon name="settings" size={14} color="white" />
+                  Gestionar Club
+                </button>
+              </div>
             </div>
           )}
         </div>
-
-        {/* Estado sin club activo */}
-        {!activeClub && (
-          <div className="glass-card animate-fadeInUp" style={{ 
-            padding: '40px 20px',
-            textAlign: 'center',
-            marginTop: '20px',
-            width: '100%',
-            boxSizing: 'border-box',
-            animationDelay: '0.3s'
-          }}>
-            <div style={{ fontSize: '64px', marginBottom: '20px' }}>
-              <Icon name="club" size={64} color="var(--border-color)" />
-            </div>
-            <h2 style={{ 
-              color: 'var(--text-primary)', 
-              marginBottom: '12px',
-              fontSize: '24px'
-            }}>
-              No tienes un club activo
-            </h2>
-            <p style={{ 
-              color: 'var(--text-secondary)', 
-              marginBottom: '30px',
-              fontSize: '16px',
-              lineHeight: '1.4',
-              maxWidth: '400px',
-              margin: '0 auto 30px auto'
-            }}>
-              Selecciona un club activo o únete a uno para empezar a jugar torneos y guardar tus estadísticas
-            </p>
-  <button
-  onClick={() => navigateWithTransition('/clubs')}
-  style={{ 
-    padding: '14px 24px',
-    border: 'none',
-    background: 'linear-gradient(135deg, var(--primary), var(--primary-dark))',
-    color: 'white',
-    borderRadius: 'var(--border-radius)',
-    fontWeight: '600',
-    cursor: 'pointer',
-    transition: 'var(--transition)',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: '10px',
-    boxShadow: 'var(--shadow)',
-    fontSize: '16px'
-  }}
-  onMouseOver={(e) => {
-    e.target.style.transform = 'translateY(-2px)';
-    e.target.style.boxShadow = 'var(--shadow-lg)';
-  }}
-  onMouseOut={(e) => {
-    e.target.style.transform = 'translateY(0)';
-    e.target.style.boxShadow = 'var(--shadow)';
-  }}
->
-  <Icon name="club" size={18} color="white" />
-  Gestionar Clubes
-  </button>          </div>
-        )}
-
-        {/* PARTIDOS RECIENTES */}
-        {recentMatches.length > 0 && (
-          <div className="glass-card animate-fadeInUp" style={{ 
-            padding: '24px',
-            marginTop: '30px',
-            width: '100%',
-            boxSizing: 'border-box',
-            animationDelay: '0.5s'
-          }}>
-            <h2 style={{ 
-              color: 'var(--text-primary)', 
-              marginBottom: '20px',
-              fontSize: '20px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '10px'
-            }}>
-              <Icon name="history" size={20} color="var(--primary)" />
-              Partidos Recientes
-            </h2>
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              {recentMatches.map((match, index) => {
-                const userTeam = match.team1.includes(state.currentUser?.id) ? 'team1' : 'team2';
-                const userScore = userTeam === 'team1' ? match.scoreTeam1 : match.scoreTeam2;
-                const opponentScore = userTeam === 'team1' ? match.scoreTeam2 : match.scoreTeam1;
-                const won = userScore > opponentScore;
-
-                return (
-                  <div key={match.id} className="animate-fadeInUp" style={{
-                    padding: '16px',
-                    background: 'var(--bg-secondary)',
-                    borderRadius: 'var(--border-radius)',
-                    border: '1px solid var(--border-color)',
-                    animationDelay: `${0.6 + index * 0.1}s`
-                  }}>
-                    <div style={{ 
-                      display: 'flex', 
-                      justifyContent: 'space-between', 
-                      alignItems: 'center',
-                      marginBottom: '8px'
-                    }}>
-                      <div style={{ color: 'var(--text-primary)', fontWeight: '600', fontSize: '14px' }}>
-                        {match.tournamentName}
-                      </div>
-                      <div style={{ 
-                        background: won ? 'var(--secondary)' : 'var(--error)',
-                        color: 'white',
-                        padding: '4px 8px',
-                        borderRadius: '8px',
-                        fontSize: '11px',
-                        fontWeight: '600'
-                      }}>
-                        {won ? 'Ganado' : 'Perdido'}
-                      </div>
-                    </div>
-                    
-                    <div style={{ 
-                      display: 'flex', 
-                      justifyContent: 'space-between', 
-                      alignItems: 'center',
-                      marginBottom: '8px'
-                    }}>
-                      <div style={{ color: 'var(--text-secondary)', fontSize: '13px' }}>
-                        Tú: {userScore} - {opponentScore} :Oponente
-                      </div>
-                      <div style={{ color: 'var(--text-muted)', fontSize: '11px' }}>
-                        {new Date(match.date).toLocaleDateString()}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
       </div>
     </div>
   );
@@ -6123,30 +6218,151 @@ function Profile() {
   };
 
   // Obtener partidos recientes para la pestaña de Partidos
-  const getRecentMatches = () => {
-    const recentMatches = [];
-    const userTournaments = getters.getTournamentsByClub ? getters.getTournamentsByClub().filter(t => 
-      t.players?.includes(currentUser?.id) || 
-      t.guestPlayers?.some(guest => guest.includes(currentUser?.name))
-    ) : [];
+// REEMPLAZA estas funciones en tu Dashboard component
 
+// Función CORREGIDA para obtener partidos recientes
+const getRecentMatches = () => {
+  const matches = [];
+  const userTournaments = getters.getTournamentsByClub();
+  
+  console.log('🔍 Buscando partidos recientes en torneos:', userTournaments.length);
+  
+  userTournaments.forEach(tournament => {
+    console.log(`📊 Torneo: ${tournament.name}, Partidos:`, tournament.matches?.length || 0);
+    
+    tournament.matches?.forEach(match => {
+      // Verificar si el partido está completado y si el usuario participó
+      const userInTeam1 = match.team1?.some(playerId => 
+        playerId === state.currentUser?.id || 
+        state.currentUser?.name?.includes(playerId)
+      );
+      
+      const userInTeam2 = match.team2?.some(playerId => 
+        playerId === state.currentUser?.id || 
+        state.currentUser?.name?.includes(playerId)
+      );
+      
+      if (match.status === 'completed' && (userInTeam1 || userInTeam2)) {
+        console.log('🎯 Partido encontrado para usuario:', match);
+        
+        // Determinar si el usuario ganó
+        const userTeam = userInTeam1 ? 'team1' : 'team2';
+        const userScore = userTeam === 'team1' ? match.scoreTeam1 : match.scoreTeam2;
+        const opponentScore = userTeam === 'team1' ? match.scoreTeam2 : match.scoreTeam1;
+        const won = userScore > opponentScore;
+
+        matches.push({
+          id: match.id,
+          tournamentId: tournament.id,
+          tournamentName: tournament.name,
+          date: match.createdAt || tournament.createdAt,
+          userScore,
+          opponentScore,
+          won,
+          userTeam
+        });
+      }
+    });
+  });
+
+  const sortedMatches = matches
+    .sort((a, b) => new Date(b.date) - new Date(a.date))
+    .slice(0, 3);
+  
+  console.log('📈 Partidos recientes encontrados:', sortedMatches.length);
+  return sortedMatches;
+};
+
+// Función CORREGIDA para calcular el ranking del club
+const calculateClubRanking = () => {
+  if (!activeClub || !activeClub.members) {
+    console.log('❌ No hay club activo o miembros');
+    return [];
+  }
+  
+  const memberStats = [];
+  const userTournaments = getters.getTournamentsByClub();
+  
+  console.log('🏆 Calculando ranking para club:', activeClub.name);
+  console.log('👥 Miembros del club:', activeClub.members.length);
+  console.log('📊 Torneos disponibles:', userTournaments.length);
+  
+  activeClub.members.forEach(memberId => {
+    const member = state.users?.find(user => user.id === memberId);
+    if (!member) {
+      console.log('⚠️ Miembro no encontrado en users:', memberId);
+      return;
+    }
+    
+    let totalMatches = 0;
+    let totalPoints = 0;
+    let totalWins = 0;
+    
+    console.log(`🔍 Analizando estadísticas para: ${member.name}`);
+    
+    // Revisar todos los torneos del club
     userTournaments.forEach(tournament => {
       tournament.matches?.forEach(match => {
-        if (match.status === 'completed' && 
-            (match.team1?.includes(currentUser?.id) || match.team2?.includes(currentUser?.id))) {
-          recentMatches.push({
-            ...match,
-            tournamentName: tournament.name,
-            date: match.createdAt
-          });
+        // Verificar si el miembro participó en este partido
+        const memberInTeam1 = match.team1?.includes(memberId);
+        const memberInTeam2 = match.team2?.includes(memberId);
+        
+        if (match.status === 'completed' && (memberInTeam1 || memberInTeam2)) {
+          totalMatches++;
+          
+          const memberTeam = memberInTeam1 ? 'team1' : 'team2';
+          const memberScore = memberTeam === 'team1' ? match.scoreTeam1 : match.scoreTeam2;
+          const opponentScore = memberTeam === 'team1' ? match.scoreTeam2 : match.scoreTeam1;
+          
+          totalPoints += memberScore;
+          if (memberScore > opponentScore) {
+            totalWins++;
+          }
+          
+          console.log(`🎯 Partido encontrado: ${member.name} - ${memberScore} vs ${opponentScore} - ${memberScore > opponentScore ? 'GANÓ' : 'PERDIÓ'}`);
         }
       });
     });
+    
+    const avgPointsPerMatch = totalMatches > 0 ? (totalPoints / totalMatches).toFixed(1) : 0;
+    const winRate = totalMatches > 0 ? (totalWins / totalMatches) * 100 : 0;
+    
+    console.log(`📊 Estadísticas finales ${member.name}:`, {
+      totalMatches,
+      totalWins,
+      avgPointsPerMatch,
+      winRate
+    });
+    
+    memberStats.push({
+      id: memberId,
+      name: member.name,
+      avatar: member.avatar,
+      profilePicture: member.profilePicture,
+      totalMatches,
+      totalPoints,
+      totalWins,
+      avgPointsPerMatch: parseFloat(avgPointsPerMatch),
+      winRate: Math.round(winRate),
+      isCurrentUser: memberId === state.currentUser?.id
+    });
+  });
+  
+  // Ordenar por puntos promedio y luego por win rate
+  const sortedRanking = memberStats
+    .filter(player => player.totalMatches > 0) // Solo jugadores con partidos
+    .sort((a, b) => {
+      if (b.avgPointsPerMatch !== a.avgPointsPerMatch) {
+        return b.avgPointsPerMatch - a.avgPointsPerMatch;
+      }
+      return b.winRate - a.winRate;
+    })
+    .slice(0, 3);
+  
+  console.log('🏅 Ranking final calculado:', sortedRanking);
+  return sortedRanking;
+};
 
-    return recentMatches
-      .sort((a, b) => new Date(b.date) - new Date(a.date))
-      .slice(0, 5);
-  };
 
   const globalStats = calculateGlobalStats();
   const recentMatches = getRecentMatches();
@@ -9047,7 +9263,7 @@ function TournamentPlay() {
                   animationDelay: `${index * 0.1}s`
                 }}>
                   
-                  {/* ✅ CORRECCIÓN: CANCHA CON MÁS PADDING SUPERIOR PARA EL MARCADOR */}
+                  {/* ✅ CANCHA DE PÁDEL PARA PARTIDOS */}
                   <div style={{ 
                     background: 'linear-gradient(135deg, #1e40af, #1e3a8a)',
                     padding: '50px 15px 20px 15px', // ✅ Más padding superior (50px)
@@ -9555,8 +9771,646 @@ function TournamentPlay() {
   );
 }
 
+// Componente para el ranking completo del club - VERSIÓN MEJORADA Y RESPONSIVE
+function ClubRanking() {
+  const { state, getters } = useApp();
+  const activeClub = getters.getActiveClub();
+  const { navigateWithTransition } = useNavigation();
+  const [selectedPlayer, setSelectedPlayer] = useState(null);
+
+  // Función para calcular el ranking (se mantiene igual)
+  const calculateFullRanking = () => {
+    if (!activeClub || !activeClub.members) {
+      console.log('❌ No hay club activo o miembros');
+      return [];
+    }
+    
+    const memberStats = [];
+    const userTournaments = getters.getTournamentsByClub();
+    
+    activeClub.members.forEach(memberId => {
+      const member = state.users?.find(user => user.id === memberId);
+      if (!member) {
+        console.log('⚠️ Miembro no encontrado en users:', memberId);
+        return;
+      }
+      
+      let totalMatches = 0;
+      let totalPoints = 0;
+      let totalWins = 0;
+      
+      userTournaments.forEach(tournament => {
+        tournament.matches?.forEach(match => {
+          const memberInTeam1 = Array.isArray(match.team1) 
+            ? match.team1.includes(memberId)
+            : false;
+          
+          const memberInTeam2 = Array.isArray(match.team2)
+            ? match.team2.includes(memberId)
+            : false;
+
+          if (match.status === 'completed' && (memberInTeam1 || memberInTeam2)) {
+            totalMatches++;
+            
+            const memberTeam = memberInTeam1 ? 'team1' : 'team2';
+            const memberScore = memberTeam === 'team1' ? (match.scoreTeam1 || 0) : (match.scoreTeam2 || 0);
+            const opponentScore = memberTeam === 'team1' ? (match.scoreTeam2 || 0) : (match.scoreTeam1 || 0);
+            
+            totalPoints += memberScore;
+            if (memberScore > opponentScore) {
+              totalWins++;
+            }
+          }
+        });
+      });
+      
+      const avgPointsPerMatch = totalMatches > 0 ? (totalPoints / totalMatches).toFixed(1) : 0;
+      const winRate = totalMatches > 0 ? (totalWins / totalMatches) * 100 : 0;
+      
+      memberStats.push({
+        id: memberId,
+        name: member.name,
+        avatar: member.avatar,
+        profilePicture: member.profilePicture,
+        email: member.email,
+        totalMatches,
+        totalPoints,
+        totalWins,
+        totalLosses: totalMatches - totalWins,
+        avgPointsPerMatch: parseFloat(avgPointsPerMatch),
+        winRate: Math.round(winRate),
+        isCurrentUser: memberId === state.currentUser?.id
+      });
+    });
+    
+    const sortedRanking = memberStats
+      .filter(player => player.totalMatches > 0)
+      .sort((a, b) => {
+        if (b.avgPointsPerMatch !== a.avgPointsPerMatch) {
+          return b.avgPointsPerMatch - a.avgPointsPerMatch;
+        }
+        if (b.winRate !== a.winRate) {
+          return b.winRate - a.winRate;
+        }
+        return b.totalMatches - a.totalMatches;
+      });
+    
+    return sortedRanking;
+  };
+
+  const fullRanking = calculateFullRanking();
+
+  // Función para abrir modal de jugador
+  const openPlayerModal = (player) => {
+    setSelectedPlayer(player);
+  };
+
+  // Función para cerrar modal
+  const closePlayerModal = () => {
+    setSelectedPlayer(null);
+  };
+
+  return (
+    <div style={{ 
+      minHeight: '100vh',
+      background: 'var(--bg-gradient)',
+      padding: '16px',
+      paddingBottom: '100px'
+    }}>
+      <div style={{ 
+        maxWidth: '800px', 
+        margin: '0 auto',
+        width: '100%'
+      }}>
+        {/* Header MEJORADO - Más compacto para móvil */}
+        <div style={{ 
+          display: 'flex', 
+          alignItems: 'center', 
+          gap: '12px',
+          marginBottom: '20px'
+        }}>
+          <button
+            onClick={() => navigateWithTransition('/dashboard')}
+            style={{
+              background: 'none',
+              border: 'none',
+              color: 'var(--primary)',
+              cursor: 'pointer',
+              padding: '8px',
+              borderRadius: 'var(--border-radius)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              flexShrink: 0
+            }}
+          >
+            <Icon name="close" size={20} color="var(--primary)" />
+          </button>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <h1 style={{ 
+              fontSize: '20px', 
+              fontWeight: '700', 
+              color: 'var(--text-primary)',
+              marginBottom: '2px',
+              wordWrap: 'break-word'
+            }}>
+              Ranking del Club
+            </h1>
+            <p style={{ 
+              color: 'var(--text-secondary)',
+              fontSize: '12px',
+              margin: 0,
+              wordWrap: 'break-word'
+            }}>
+              {activeClub?.name} • {fullRanking.length} jugadores con partidos
+            </p>
+          </div>
+        </div>
+
+        {/* Lista de Ranking - MEJORADA PARA MÓVIL */}
+        <div className="glass-card" style={{ 
+          padding: '16px',
+          width: '100%',
+          boxSizing: 'border-box'
+        }}>
+          {fullRanking.length === 0 ? (
+            <div style={{ 
+              textAlign: 'center', 
+              padding: '40px 16px',
+              color: 'var(--text-secondary)'
+            }}>
+              <Icon name="users" size={40} color="var(--border-color)" />
+              <h3 style={{ 
+                margin: '16px 0 8px 0', 
+                color: 'var(--text-primary)',
+                fontSize: '16px'
+              }}>
+                No hay datos de ranking
+              </h3>
+              <p style={{ 
+                margin: 0, 
+                fontSize: '13px',
+                lineHeight: '1.4'
+              }}>
+                {activeClub ? 
+                  'Los miembros aparecerán aquí cuando jueguen partidos' : 
+                  'Selecciona un club activo para ver el ranking'
+                }
+              </p>
+              {!activeClub && (
+                <button
+                  onClick={() => navigateWithTransition('/clubs')}
+                  style={{
+                    marginTop: '16px',
+                    padding: '10px 16px',
+                    border: 'none',
+                    background: 'linear-gradient(135deg, var(--primary), var(--primary-dark))',
+                    color: 'white',
+                    borderRadius: 'var(--border-radius)',
+                    fontWeight: '600',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    fontSize: '13px'
+                  }}
+                >
+                  <Icon name="club" size={14} color="white" />
+                  Gestionar Clubes
+                </button>
+              )}
+            </div>
+          ) : (
+            <div style={{ 
+              display: 'flex', 
+              flexDirection: 'column', 
+              gap: '10px',
+              width: '100%'
+            }}>
+              {fullRanking.map((player, index) => {
+                const isCurrentUser = player.isCurrentUser;
+                const topThree = index < 3;
+                
+                return (
+                  <div 
+                    key={player.id} 
+                    className="animate-fadeInUp" 
+                    onClick={() => openPlayerModal(player)}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '12px',
+                      padding: '14px',
+                      background: isCurrentUser ? 'rgba(99, 102, 241, 0.1)' : 'var(--card-bg)',
+                      borderRadius: 'var(--border-radius)',
+                      border: isCurrentUser ? '2px solid var(--primary)' : '1px solid var(--border-color)',
+                      animationDelay: `${index * 0.1}s`,
+                      transition: 'var(--transition)',
+                      cursor: 'pointer',
+                      width: '100%',
+                      boxSizing: 'border-box'
+                    }}
+                    onMouseOver={(e) => {
+                      e.target.style.transform = 'translateY(-2px)';
+                      e.target.style.boxShadow = 'var(--shadow-md)';
+                    }}
+                    onMouseOut={(e) => {
+                      e.target.style.transform = 'translateY(0)';
+                      e.target.style.boxShadow = 'none';
+                    }}
+                  >
+                    {/* Posición - MEJORADO PARA MÓVIL */}
+                    <div style={{
+                      width: '32px',
+                      height: '32px',
+                      borderRadius: '50%',
+                      background: topThree 
+                        ? index === 0 
+                          ? 'linear-gradient(135deg, #f59e0b, #d97706)'
+                          : index === 1 
+                            ? 'linear-gradient(135deg, #9ca3af, #6b7280)'
+                            : 'linear-gradient(135deg, #b45309, #92400e)'
+                        : 'var(--bg-secondary)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      color: topThree ? 'white' : 'var(--text-primary)',
+                      fontWeight: '700',
+                      fontSize: '13px',
+                      flexShrink: 0
+                    }}>
+                      {index + 1}
+                    </div>
+
+                    {/* Avatar - MEJORADO PARA MÓVIL */}
+                    <div style={{
+                      width: '40px',
+                      height: '40px',
+                      borderRadius: '50%',
+                      background: player.profilePicture ? 
+                        `url(${player.profilePicture}) center/cover` :
+                        'linear-gradient(135deg, var(--primary), var(--primary-dark))',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      color: 'white',
+                      fontSize: player.profilePicture ? '0' : '14px',
+                      fontWeight: '600',
+                      border: '2px solid var(--card-bg)',
+                      flexShrink: 0
+                    }}>
+                      {!player.profilePicture && player.avatar}
+                    </div>
+
+                    {/* Información del Jugador - MEJORADA PARA MÓVIL */}
+                    <div style={{ 
+                      flex: 1, 
+                      minWidth: 0,
+                      overflow: 'hidden'
+                    }}>
+                      <div style={{ 
+                        display: 'flex', 
+                        alignItems: 'center', 
+                        gap: '6px',
+                        marginBottom: '4px',
+                        flexWrap: 'wrap'
+                      }}>
+                        <span style={{ 
+                          color: 'var(--text-primary)', 
+                          fontWeight: '600',
+                          fontSize: '14px',
+                          whiteSpace: 'nowrap',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          flex: 1,
+                          minWidth: 0
+                        }}>
+                          {player.name}
+                        </span>
+                        {isCurrentUser && (
+                          <span style={{ 
+                            background: 'var(--primary)', 
+                            color: 'white',
+                            padding: '2px 6px',
+                            borderRadius: '6px',
+                            fontSize: '10px',
+                            fontWeight: '600',
+                            flexShrink: 0
+                          }}>
+                            Tú
+                          </span>
+                        )}
+                      </div>
+                      <div style={{ 
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(auto-fit, minmax(80px, 1fr))',
+                        gap: '6px',
+                        fontSize: '11px',
+                        color: 'var(--text-muted)'
+                      }}>
+                        <span style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
+                          <Icon name="target" size={10} color="var(--text-muted)" />
+                          {player.avgPointsPerMatch} pts
+                        </span>
+                        <span style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
+                          <Icon name="stats" size={10} color="var(--text-muted)" />
+                          {player.winRate}% wins
+                        </span>
+                        <span style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
+                          <Icon name="play" size={10} color="var(--text-muted)" />
+                          {player.totalMatches} partidos
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Modal de Jugador - NUEVO */}
+      {selectedPlayer && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(0, 0, 0, 0.7)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 2000,
+          padding: '16px'
+        }}>
+          <div 
+            className="glass-card animate-scaleIn"
+            style={{ 
+              padding: '24px',
+              maxWidth: '400px',
+              width: '100%',
+              maxHeight: '90vh',
+              overflowY: 'auto',
+              position: 'relative'
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Botón cerrar */}
+            <button
+              onClick={closePlayerModal}
+              style={{
+                position: 'absolute',
+                top: '16px',
+                right: '16px',
+                background: 'none',
+                border: 'none',
+                fontSize: '20px',
+                cursor: 'pointer',
+                color: 'var(--text-secondary)',
+                padding: '4px',
+                borderRadius: '50%',
+                width: '32px',
+                height: '32px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center'
+              }}
+            >
+              <Icon name="close" size={18} color="currentColor" />
+            </button>
+
+            {/* Contenido del Modal */}
+            <div style={{ textAlign: 'center' }}>
+              {/* Avatar Grande */}
+              <div style={{
+                width: '160px',
+                height: '160px',
+                borderRadius: '50%',
+                background: selectedPlayer.profilePicture ? 
+                  `url(${selectedPlayer.profilePicture}) center/cover` :
+                  'linear-gradient(135deg, var(--primary), var(--primary-dark))',
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                color: 'white',
+                fontSize: selectedPlayer.profilePicture ? '0' : '24px',
+                fontWeight: '600',
+                border: '4px solid var(--card-bg)',
+                boxShadow: 'var(--shadow-lg)',
+                marginBottom: '16px'
+              }}>
+                {!selectedPlayer.profilePicture && selectedPlayer.avatar}
+              </div>
+
+              {/* Nombre */}
+              <h2 style={{ 
+                fontSize: '20px', 
+                fontWeight: '700', 
+                color: 'var(--text-primary)',
+                marginBottom: '4px'
+              }}>
+                {selectedPlayer.name}
+              </h2>
+
+              {selectedPlayer.email && (
+                <p style={{ 
+                  color: 'var(--text-secondary)', 
+                  fontSize: '14px',
+                  marginBottom: '20px'
+                }}>
+                  {selectedPlayer.email}
+              </p>
+              )}
+
+              {/* Estadísticas en Grid Responsive */}
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(2, 1fr)',
+                gap: '12px',
+                marginBottom: '20px'
+              }}>
+                <div className="glass-card" style={{ 
+                  padding: '16px',
+                  textAlign: 'center',
+                  background: 'var(--bg-secondary)'
+                }}>
+                  <div style={{ 
+                    fontSize: '20px', 
+                    fontWeight: '700', 
+                    color: 'var(--primary)',
+                    marginBottom: '4px'
+                  }}>
+                    {selectedPlayer.avgPointsPerMatch}
+                  </div>
+                  <div style={{ 
+                    fontSize: '12px', 
+                    color: 'var(--text-secondary)',
+                    fontWeight: '600'
+                  }}>
+                    Puntos/Partido
+                  </div>
+                </div>
+
+                <div className="glass-card" style={{ 
+                  padding: '16px',
+                  textAlign: 'center',
+                  background: 'var(--bg-secondary)'
+                }}>
+                  <div style={{ 
+                    fontSize: '20px', 
+                    fontWeight: '700', 
+                    color: 'var(--secondary)',
+                    marginBottom: '4px'
+                  }}>
+                    {selectedPlayer.winRate}%
+                  </div>
+                  <div style={{ 
+                    fontSize: '12px', 
+                    color: 'var(--text-secondary)',
+                    fontWeight: '600'
+                  }}>
+                    Tasa Victorias
+                  </div>
+                </div>
+
+                <div className="glass-card" style={{ 
+                  padding: '16px',
+                  textAlign: 'center',
+                  background: 'var(--bg-secondary)'
+                }}>
+                  <div style={{ 
+                    fontSize: '20px', 
+                    fontWeight: '700', 
+                    color: 'var(--accent)',
+                    marginBottom: '4px'
+                  }}>
+                    {selectedPlayer.totalMatches}
+                  </div>
+                  <div style={{ 
+                    fontSize: '12px', 
+                    color: 'var(--text-secondary)',
+                    fontWeight: '600'
+                  }}>
+                    Partidos Totales
+                  </div>
+                </div>
+
+                <div className="glass-card" style={{ 
+                  padding: '16px',
+                  textAlign: 'center',
+                  background: 'var(--bg-secondary)'
+                }}>
+                  <div style={{ 
+                    fontSize: '20px', 
+                    fontWeight: '700', 
+                    color: '#8b5cf6',
+                    marginBottom: '4px'
+                  }}>
+                    {selectedPlayer.totalWins}
+                  </div>
+                  <div style={{ 
+                    fontSize: '12px', 
+                    color: 'var(--text-secondary)',
+                    fontWeight: '600'
+                  }}>
+                    Victorias
+                  </div>
+                </div>
+              </div>
+
+              {/* Información adicional */}
+              <div style={{
+                background: 'var(--bg-secondary)',
+                padding: '16px',
+                borderRadius: 'var(--border-radius)',
+                fontSize: '13px',
+                color: 'var(--text-secondary)',
+                textAlign: 'left'
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
+                  <span>Partidos ganados:</span>
+                  <span style={{ fontWeight: '600' }}>{selectedPlayer.totalWins}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
+                  <span>Partidos perdidos:</span>
+                  <span style={{ fontWeight: '600' }}>{selectedPlayer.totalLosses}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span>Puntos totales:</span>
+                  <span style={{ fontWeight: '600' }}>{selectedPlayer.totalPoints}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Componente principal App
 function App() {
+  const [appLoading, setAppLoading] = useState(true);
+
+  useEffect(() => {
+    const checkAuthState = () => {
+      const savedUser = localStorage.getItem('padel-user');
+      const rememberMe = localStorage.getItem('padel-remember') === 'true';
+      
+      if (savedUser && rememberMe) {
+        try {
+          const userData = JSON.parse(savedUser);
+          console.log('🔄 Recuperando sesión guardada:', userData.name);
+        } catch (error) {
+          console.error('Error recuperando sesión:', error);
+          localStorage.removeItem('padel-user');
+          localStorage.removeItem('padel-remember');
+        }
+      }
+      
+      setAppLoading(false);
+    };
+
+    checkAuthState();
+  }, []);
+
+  // Pantalla de carga mientras verifica la autenticación
+  if (appLoading) {
+    return (
+      <div style={{
+        display: 'flex',
+        justifyContent: 'center',
+        alignItems: 'center',
+        height: '100vh',
+        background: 'var(--bg-gradient)'
+      }}>
+        <div style={{
+          textAlign: 'center',
+          padding: '40px',
+          background: 'var(--bg-glass)',
+          borderRadius: 'var(--border-radius-lg)',
+          backdropFilter: 'blur(20px)',
+          border: '1px solid var(--border-color)'
+        }}>
+          <div style={{
+            width: '50px',
+            height: '50px',
+            border: '3px solid var(--border-color)',
+            borderTop: '3px solid var(--primary)',
+            borderRadius: '50%',
+            animation: 'spin 1s linear infinite',
+            margin: '0 auto 20px'
+          }}></div>
+          <p style={{ color: 'var(--text-primary)', fontWeight: '600' }}>
+            Cargando Padel Pro...
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <AppProvider>
       <ThemeProvider>
@@ -9572,6 +10426,7 @@ function App() {
                 <Route path="/tournament/:id" element={<ProtectedRoute><TournamentDetail /></ProtectedRoute>} />
                 <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
                 <Route path="/tournament/:id/play" element={<ProtectedRoute><TournamentPlay /></ProtectedRoute>} />
+                <Route path="/ranking" element={<ProtectedRoute><ClubRanking /></ProtectedRoute>} />
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Routes>
             </div>
