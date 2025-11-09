@@ -224,6 +224,13 @@ home: (
         <line x1="6" y1="20" x2="6" y2="14" stroke={color} strokeWidth="2"/>
       </svg>
     ),
+magic: (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" className={className}>
+    <path d="M12 3L13.5 7.5L18 9L13.5 10.5L12 15L10.5 10.5L6 9L10.5 7.5L12 3Z" stroke={color} strokeWidth="2"/>
+    <path d="M19 21L20 19L21 21L23 22L21 23L20 25L19 23L17 22L19 21Z" stroke={color} strokeWidth="2"/>
+    <path d="M3 15L4 13L5 15L7 16L5 17L4 19L3 17L1 16L3 15Z" stroke={color} strokeWidth="2"/>
+  </svg>
+),
 trophy: (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" className={className}>
     {/* Copa superior - movida más arriba */}
@@ -727,11 +734,12 @@ function ProtectedRoute({ children }) {
   );
 }
 
-// Componente de Login - ACTUALIZADO CON NUEVO DISEÑO
+// Componente de Login - ACTUALIZADO CON MANTENER SESIÓN
 function Login() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isLogin, setIsLogin] = useState(true);
+  const [rememberMe, setRememberMe] = useState(false);
   const [registerData, setRegisterData] = useState({
     name: '',
     email: '',
@@ -742,6 +750,69 @@ function Login() {
   const [formErrors, setFormErrors] = useState({});
   const { actions, state } = useApp();
   const { addToast } = useToast();
+
+  // Cargar credenciales guardadas al iniciar
+  useEffect(() => {
+    const savedCredentials = localStorage.getItem('padel-remembered-credentials');
+    if (savedCredentials) {
+      try {
+        const { email: savedEmail, password: savedPassword, remember } = JSON.parse(savedCredentials);
+        if (remember && savedEmail && savedPassword) {
+          setEmail(savedEmail);
+          setPassword(savedPassword);
+          setRememberMe(true);
+        }
+      } catch (error) {
+        console.error('Error cargando credenciales guardadas:', error);
+      }
+    }
+  }, []);
+
+  // Verificar si hay sesión guardada al cargar el componente
+  useEffect(() => {
+    const checkSavedSession = async () => {
+      const savedUser = localStorage.getItem('padel-user');
+      const rememberMe = localStorage.getItem('padel-remember') === 'true';
+      
+      if (savedUser && rememberMe) {
+        try {
+          const userData = JSON.parse(savedUser);
+          console.log('🔄 Recuperando sesión guardada:', userData.name);
+          
+          // Verificar que el usuario todavía existe en Firestore
+          const userDoc = await getDoc(doc(db, 'users', userData.id));
+          if (userDoc.exists()) {
+            const updatedUserData = userDoc.data();
+            
+            const userContext = {
+              id: userData.id,
+              name: updatedUserData.name || userData.name,
+              email: updatedUserData.email || userData.email,
+              avatar: updatedUserData.avatar || userData.avatar || '👤',
+              profilePicture: updatedUserData.profilePicture || userData.profilePicture || null,
+              activeClub: updatedUserData.activeClub || userData.activeClub || null,
+              stats: updatedUserData.stats || userData.stats || {
+                totalMatches: 0,
+                totalWins: 0,
+                winRate: 0,
+                avgPointsPerMatch: 0
+              }
+            };
+
+            actions.login(userContext);
+          }
+        } catch (error) {
+          console.error('Error recuperando sesión:', error);
+          // Limpiar datos corruptos
+          localStorage.removeItem('padel-user');
+          localStorage.removeItem('padel-remember');
+          localStorage.removeItem('padel-remembered-credentials');
+        }
+      }
+    };
+
+    checkSavedSession();
+  }, [actions, addToast]);
 
   useEffect(() => {
     setFormErrors({});
@@ -773,6 +844,25 @@ function Login() {
           avgPointsPerMatch: 0
         }
       };
+
+      // Guardar sesión y credenciales según la preferencia del usuario
+      if (rememberMe) {
+        localStorage.setItem('padel-user', JSON.stringify(userContext));
+        localStorage.setItem('padel-remember', 'true');
+        localStorage.setItem('padel-remembered-credentials', JSON.stringify({
+          email: email,
+          password: password,
+          remember: true
+        }));
+        console.log('💾 Sesión y credenciales guardadas');
+      } else {
+        // Solo guardar sesión temporal (hasta cerrar navegador)
+        sessionStorage.setItem('padel-user', JSON.stringify(userContext));
+        // Limpiar credenciales guardadas si no quiere recordar
+        localStorage.removeItem('padel-remembered-credentials');
+        localStorage.removeItem('padel-remember');
+        localStorage.removeItem('padel-user');
+      }
 
       actions.login(userContext);
       addToast(`Bienvenido de nuevo, ${userContext.name}`, 'success');
@@ -886,6 +976,19 @@ function Login() {
         ...userData
       };
 
+      // Guardar sesión automáticamente después del registro
+      if (rememberMe) {
+        localStorage.setItem('padel-user', JSON.stringify(userContext));
+        localStorage.setItem('padel-remember', 'true');
+        localStorage.setItem('padel-remembered-credentials', JSON.stringify({
+          email: registerData.email,
+          password: registerData.password,
+          remember: true
+        }));
+      } else {
+        sessionStorage.setItem('padel-user', JSON.stringify(userContext));
+      }
+
       actions.login(userContext);
       addToast(`Cuenta creada exitosamente, ${registerData.name}`, 'success');
 
@@ -919,6 +1022,17 @@ function Login() {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  // Función para limpiar credenciales guardadas
+  const clearSavedCredentials = () => {
+    localStorage.removeItem('padel-remembered-credentials');
+    localStorage.removeItem('padel-remember');
+    localStorage.removeItem('padel-user');
+    setEmail('');
+    setPassword('');
+    setRememberMe(false);
+    addToast('Credenciales eliminadas', 'info');
   };
 
   if (state.isAuthenticated) {
@@ -995,99 +1109,98 @@ function Login() {
           </p>
         </div>
 
-{/* Pestañas Login/Registro */}
-<div className="animate-fadeInUp" style={{ animationDelay: '0.1s' }}>
-  <div style={{ 
-    display: 'flex', 
-    marginBottom: '30px',
-    background: 'var(--bg-secondary)',
-    borderRadius: 'var(--border-radius)',
-    padding: '4px',
-    position: 'relative'
-  }} className="hover-lift">
-    <button
-      onClick={() => setIsLogin(true)}
-      style={{
-        flex: 1,
-        padding: '14px',
-        border: 'none',
-        background: isLogin ? 'var(--primary)' : 'transparent',
-        color: isLogin ? 'white' : 'var(--text-secondary)',
-        borderRadius: 'var(--border-radius)',
-        fontWeight: '600',
-        cursor: 'pointer',
-        transition: 'var(--transition)',
-        position: 'relative',
-        zIndex: 2,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: '8px'
-      }}
-      disabled={isLoading}
-    >
-      {isLoading && isLogin ? (
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <div style={{
-            width: '16px',
-            height: '16px',
-            border: '2px solid transparent',
-            borderTop: '2px solid currentColor',
-            borderRadius: '50%',
-            animation: 'spin 1s linear infinite'
-          }}></div>
-          Cargando...
+        {/* Pestañas Login/Registro */}
+        <div className="animate-fadeInUp" style={{ animationDelay: '0.1s' }}>
+          <div style={{ 
+            display: 'flex', 
+            marginBottom: '30px',
+            background: 'var(--bg-secondary)',
+            borderRadius: 'var(--border-radius)',
+            padding: '4px',
+            position: 'relative'
+          }} className="hover-lift">
+            <button
+              onClick={() => setIsLogin(true)}
+              style={{
+                flex: 1,
+                padding: '14px',
+                border: 'none',
+                background: isLogin ? 'var(--primary)' : 'transparent',
+                color: isLogin ? 'white' : 'var(--text-secondary)',
+                borderRadius: 'var(--border-radius)',
+                fontWeight: '600',
+                cursor: 'pointer',
+                transition: 'var(--transition)',
+                position: 'relative',
+                zIndex: 2,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '8px'
+              }}
+              disabled={isLoading}
+            >
+              {isLoading && isLogin ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <div style={{
+                    width: '16px',
+                    height: '16px',
+                    border: '2px solid transparent',
+                    borderTop: '2px solid currentColor',
+                    borderRadius: '50%',
+                    animation: 'spin 1s linear infinite'
+                  }}></div>
+                  Cargando...
+                </div>
+              ) : (
+                <>
+                  <Icon name="lock" size={16} color={isLogin ? 'white' : 'currentColor'} style={{ marginRight: '4px' }} />
+                  Iniciar Sesión
+                </>
+              )}
+            </button>
+            <button
+              onClick={() => setIsLogin(false)}
+              style={{
+                flex: 1,
+                padding: '12px',
+                border: 'none',
+                background: !isLogin ? 'var(--primary)' : 'transparent',
+                color: !isLogin ? 'white' : 'var(--text-secondary)',
+                borderRadius: 'var(--border-radius)',
+                fontWeight: '600',
+                cursor: 'pointer',
+                transition: 'var(--transition)',
+                position: 'relative',
+                zIndex: 2,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '8px'
+              }}
+              disabled={isLoading}
+            >
+              {isLoading && !isLogin ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <div style={{
+                    width: '16px',
+                    height: '16px',
+                    border: '2px solid transparent',
+                    borderTop: '2px solid currentColor',
+                    borderRadius: '50%',
+                    animation: 'spin 1s linear infinite'
+                  }}></div>
+                  Cargando...
+                </div>
+              ) : (
+                <>
+                  <Icon name="add" size={16} color={!isLogin ? 'white' : 'currentColor'} style={{ marginRight: '4px' }} />
+                  Registrarse
+                </>
+              )}
+            </button>
+          </div>
         </div>
-      ) : (
-        <>
-          <Icon name="lock" size={16} color={isLogin ? 'white' : 'currentColor'} style={{ marginRight: '4px' }} />
-          Iniciar Sesión
-        </>
-      )}
-    </button>
-    <button
-      onClick={() => setIsLogin(false)}
-      style={{
-        flex: 1,
-        padding: '12px',
-        border: 'none',
-        background: !isLogin ? 'var(--primary)' : 'transparent',
-        color: !isLogin ? 'white' : 'var(--text-secondary)',
-        borderRadius: 'var(--border-radius)',
-        fontWeight: '600',
-        cursor: 'pointer',
-        transition: 'var(--transition)',
-        position: 'relative',
-        zIndex: 2,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: '8px'
-      }}
-      disabled={isLoading}
-    >
-      {isLoading && !isLogin ? (
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <div style={{
-            width: '16px',
-            height: '16px',
-            border: '2px solid transparent',
-            borderTop: '2px solid currentColor',
-            borderRadius: '50%',
-            animation: 'spin 1s linear infinite'
-          }}></div>
-          Cargando...
-        </div>
-      ) : (
-        <>
-          <Icon name="add" size={16} color={!isLogin ? 'white' : 'currentColor'} style={{ marginRight: '4px' }} />
-          Registrarse
-        </>
-      )}
-    </button>
-  </div>
-</div>
-
 
         {/* Mensaje de error general */}
         {formErrors.general && (
@@ -1143,7 +1256,7 @@ function Login() {
               />
             </div>
 
-            <div style={{ marginBottom: '30px' }}>
+            <div style={{ marginBottom: '20px' }}>
               <label style={{ 
                 display: 'block', 
                 marginBottom: '8px', 
@@ -1172,65 +1285,144 @@ function Login() {
               />
             </div>
 
-<button 
-  type="submit"
-  style={{ 
-    width: '100%',
-    padding: '12px',
-    border: 'none',
-    background: 'linear-gradient(135deg, var(--primary), var(--primary-dark))',
-    color: 'white',
-    borderRadius: 'var(--border-radius)',
-    fontWeight: '600',
-    cursor: 'pointer',
-    transition: 'var(--transition)',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: '10px',
-    boxShadow: 'var(--shadow)',
-    fontSize: '16px'
-  }}
-  onMouseOver={(e) => {
-    e.target.style.transform = 'translateY(-2px)';
-    e.target.style.boxShadow = 'var(--shadow-lg)';
-  }}
-  onMouseOut={(e) => {
-    e.target.style.transform = 'translateY(0)';
-    e.target.style.boxShadow = 'var(--shadow)';
-  }}
-  disabled={isLoading}
->
-  {isLoading ? (
-    <>
-      <span style={{ opacity: 0 }}>Iniciar Sesión</span>
-      <div style={{
-        position: 'absolute',
-        top: '50%',
-        left: '50%',
-        transform: 'translate(-50%, -50%)',
-        display: 'flex',
-        alignItems: 'center',
-        gap: '8px'
-      }}>
-        <div style={{
-          width: '16px',
-          height: '16px',
-          border: '2px solid transparent',
-          borderTop: '2px solid white',
-          borderRadius: '50%',
-          animation: 'spin 1s linear infinite'
-        }}></div>
-        Procesando...
-      </div>
-    </>
-  ) : (
-    <>
-      <Icon name="lock" size={18} color="white" />
-      Iniciar Sesión
-    </>
-  )}
-</button>          </form>
+            {/* Checkbox Recordar Credenciales */}
+            <div style={{ marginBottom: '25px' }}>
+              <label style={{ 
+                display: 'flex', 
+                alignItems: 'center', 
+                gap: '10px',
+                cursor: 'pointer',
+                fontSize: '14px',
+                color: 'var(--text-secondary)'
+              }}>
+                <input
+                  type="checkbox"
+                  checked={rememberMe}
+                  onChange={(e) => setRememberMe(e.target.checked)}
+                  disabled={isLoading}
+                  style={{ 
+                    width: '16px', 
+                    height: '16px',
+                    cursor: 'pointer'
+                  }}
+                />
+                <span>Recordar mis credenciales</span>
+              </label>
+              {rememberMe && email && (
+                <p style={{ 
+                  fontSize: '12px', 
+                  color: 'var(--text-muted)', 
+                  marginTop: '5px',
+                  marginLeft: '26px'
+                }}>
+                  Tus credenciales se guardarán de forma segura
+                </p>
+              )}
+            </div>
+
+            {/* Botón de Login MEJORADO - CENTRADO */}
+            <button 
+              type="submit"
+              style={{ 
+                width: '100%',
+                padding: '14px',
+                border: 'none',
+                background: 'linear-gradient(135deg, var(--primary), var(--primary-dark))',
+                color: 'white',
+                borderRadius: 'var(--border-radius)',
+                fontWeight: '600',
+                cursor: isLoading ? 'not-allowed' : 'pointer',
+                transition: 'var(--transition)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '10px',
+                boxShadow: 'var(--shadow)',
+                fontSize: '16px',
+                position: 'relative',
+                overflow: 'hidden',
+                minHeight: '48px'
+              }}
+              onMouseOver={(e) => {
+                if (!isLoading) {
+                  e.target.style.transform = 'translateY(-2px)';
+                  e.target.style.boxShadow = 'var(--shadow-lg)';
+                }
+              }}
+              onMouseOut={(e) => {
+                if (!isLoading) {
+                  e.target.style.transform = 'translateY(0)';
+                  e.target.style.boxShadow = 'var(--shadow)';
+                }
+              }}
+              disabled={isLoading}
+            >
+              {isLoading ? (
+                <>
+                  {/* Texto oculto para mantener el tamaño del botón */}
+                  <span style={{ opacity: 0 }}>Iniciar Sesión</span>
+                  
+                  {/* Contenido del loading CENTRADO */}
+                  <div style={{
+                    position: 'absolute',
+                    top: '50%',
+                    left: '50%',
+                    transform: 'translate(-50%, -50%)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '10px',
+                    margin: 0,
+                    padding: 0
+                  }}>
+                    <div style={{
+                      width: '18px',
+                      height: '18px',
+                      border: '2px solid transparent',
+                      borderTop: '2px solid white',
+                      borderRadius: '50%',
+                      animation: 'spin 1s linear infinite'
+                    }}></div>
+                    <span style={{ 
+                      fontSize: '16px',
+                      fontWeight: '600',
+                      whiteSpace: 'nowrap'
+                    }}>
+                      Procesando...
+                    </span>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <Icon name="lock" size={18} color="white" />
+                  Iniciar Sesión
+                </>
+              )}
+            </button>
+
+            {/* Botón para limpiar credenciales si están guardadas */}
+            {localStorage.getItem('padel-remembered-credentials') && (
+              <div style={{ 
+                textAlign: 'center', 
+                marginTop: '15px'
+              }}>
+                <button
+                  type="button"
+                  onClick={clearSavedCredentials}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    color: 'var(--text-muted)',
+                    fontSize: '12px',
+                    cursor: 'pointer',
+                    textDecoration: 'underline',
+                    padding: '5px'
+                  }}
+                >
+                  Olvidar credenciales guardadas
+                </button>
+              </div>
+            )}
+          </form>
         ) : (
           // FORMULARIO DE REGISTRO
           <form onSubmit={handleRegister} className="animate-stagger">
@@ -1343,7 +1535,7 @@ function Login() {
               )}
             </div>
 
-            <div style={{ marginBottom: '30px' }}>
+            <div style={{ marginBottom: '20px' }}>
               <label style={{ 
                 display: 'block', 
                 marginBottom: '8px', 
@@ -1378,67 +1570,110 @@ function Login() {
               )}
             </div>
 
-<button 
-  type="submit"
-  style={{ 
-    width: '100%',
-    padding: '14px',
-    border: 'none',
-    background: 'linear-gradient(135deg, var(--primary), var(--primary-dark))',
-    color: 'white',
-    borderRadius: 'var(--border-radius)',
-    fontWeight: '600',
-    cursor: 'pointer',
-    transition: 'var(--transition)',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: '10px',
-    boxShadow: 'var(--shadow)',
-    fontSize: '16px',
-    position: 'relative',
-    overflow: 'hidden'
-  }}
-  onMouseOver={(e) => {
-    e.target.style.transform = 'translateY(-2px)';
-    e.target.style.boxShadow = 'var(--shadow-lg)';
-  }}
-  onMouseOut={(e) => {
-    e.target.style.transform = 'translateY(0)';
-    e.target.style.boxShadow = 'var(--shadow)';
-  }}
-  disabled={isLoading}
->
-  {isLoading ? (
-    <>
-      <span style={{ opacity: 0 }}>Crear Cuenta</span>
-      <div style={{
-        position: 'absolute',
-        top: '50%',
-        left: '50%',
-        transform: 'translate(-50%, -50%)',
-        display: 'flex',
-        alignItems: 'center',
-        gap: '8px'
-      }}>
-        <div style={{
-          width: '16px',
-          height: '16px',
-          border: '2px solid transparent',
-          borderTop: '2px solid white',
-          borderRadius: '50%',
-          animation: 'spin 1s linear infinite'
-        }}></div>
-        Creando cuenta...
-      </div>
-    </>
-  ) : (
-    <>
-      <Icon name="add" size={18} color="white" />
-      Crear Cuenta
-    </>
-  )}
-</button>          </form>
+            {/* Checkbox Recordar Credenciales en Registro */}
+            <div style={{ marginBottom: '25px' }}>
+              <label style={{ 
+                display: 'flex', 
+                alignItems: 'center', 
+                gap: '10px',
+                cursor: 'pointer',
+                fontSize: '14px',
+                color: 'var(--text-secondary)'
+              }}>
+                <input
+                  type="checkbox"
+                  checked={rememberMe}
+                  onChange={(e) => setRememberMe(e.target.checked)}
+                  disabled={isLoading}
+                  style={{ 
+                    width: '16px', 
+                    height: '16px',
+                    cursor: 'pointer'
+                  }}
+                />
+                <span>Recordar mis credenciales</span>
+              </label>
+            </div>
+
+            {/* Botón de Registro MEJORADO - CENTRADO */}
+            <button 
+              type="submit"
+              style={{ 
+                width: '100%',
+                padding: '14px',
+                border: 'none',
+                background: 'linear-gradient(135deg, var(--primary), var(--primary-dark))',
+                color: 'white',
+                borderRadius: 'var(--border-radius)',
+                fontWeight: '600',
+                cursor: isLoading ? 'not-allowed' : 'pointer',
+                transition: 'var(--transition)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '10px',
+                boxShadow: 'var(--shadow)',
+                fontSize: '16px',
+                position: 'relative',
+                overflow: 'hidden',
+                minHeight: '48px'
+              }}
+              onMouseOver={(e) => {
+                if (!isLoading) {
+                  e.target.style.transform = 'translateY(-2px)';
+                  e.target.style.boxShadow = 'var(--shadow-lg)';
+                }
+              }}
+              onMouseOut={(e) => {
+                if (!isLoading) {
+                  e.target.style.transform = 'translateY(0)';
+                  e.target.style.boxShadow = 'var(--shadow)';
+                }
+              }}
+              disabled={isLoading}
+            >
+              {isLoading ? (
+                <>
+                  {/* Texto oculto para mantener el tamaño del botón */}
+                  <span style={{ opacity: 0 }}>Crear Cuenta</span>
+                  
+                  {/* Contenido del loading CENTRADO */}
+                  <div style={{
+                    position: 'absolute',
+                    top: '50%',
+                    left: '50%',
+                    transform: 'translate(-50%, -50%)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '10px',
+                    margin: 0,
+                    padding: 0
+                  }}>
+                    <div style={{
+                      width: '18px',
+                      height: '18px',
+                      border: '2px solid transparent',
+                      borderTop: '2px solid white',
+                      borderRadius: '50%',
+                      animation: 'spin 1s linear infinite'
+                    }}></div>
+                    <span style={{ 
+                      fontSize: '16px',
+                      fontWeight: '600',
+                      whiteSpace: 'nowrap'
+                    }}>
+                      Creando cuenta...
+                    </span>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <Icon name="add" size={18} color="white" />
+                  Crear Cuenta
+                </>
+              )}
+            </button>
+          </form>
         )}
 
         {/* Información adicional */}
@@ -1489,6 +1724,7 @@ function Login() {
     </div>
   );
 }
+
 
 // Componente de Navegación - SOLO BARRA INFERIOR CORREGIDA
 function Navigation() {
@@ -1802,7 +2038,7 @@ const calculateEnhancedStats = () => {
   let totalMatches = 0;
   let totalWins = 0;
   let totalPoints = 0;
-
+  
   console.log('=== CALCULANDO ESTADÍSTICAS MEJORADAS ===');
   console.log('Torneos encontrados:', userTournaments.length);
   console.log('Usuario actual ID:', state.currentUser?.id);
@@ -8412,7 +8648,12 @@ function TournamentPlay() {
   const [editingScores, setEditingScores] = useState({});
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [localTournament, setLocalTournament] = useState(null);
-  const [isLoading, setIsLoading] = useState(false);
+const [isLoading, setIsLoading] = useState(false);
+const [showCustomMatchForm, setShowCustomMatchForm] = useState(false);
+const [customMatch, setCustomMatch] = useState({
+  team1: [],
+  team2: []
+});
 
   useEffect(() => {
     if (tournament) {
@@ -8867,6 +9108,101 @@ function TournamentPlay() {
     }
   };
 
+// 🎯 FUNCIÓN PARA AÑADIR PARTIDO PERSONALIZADO
+const addCustomMatch = async () => {
+  if (localTournament.status === 'completed') {
+    addToast('No puedes añadir partidos a un torneo completado', 'warning');
+    return;
+  }
+
+  const allPlayers = [...localTournament.players, ...localTournament.guestPlayers.map((_, idx) => `guest-${idx}`)];
+  
+  if (allPlayers.length < 4) {
+    addToast('Se necesitan al menos 4 jugadores para crear un partido', 'warning');
+    return;
+  }
+
+  // Validar que ambos equipos tengan 2 jugadores
+  if (customMatch.team1.length !== 2 || customMatch.team2.length !== 2) {
+    addToast('Cada equipo debe tener exactamente 2 jugadores', 'error');
+    return;
+  }
+
+  // Validar que no hay jugadores repetidos entre equipos
+  const allSelectedPlayers = [...customMatch.team1, ...customMatch.team2];
+  const uniquePlayers = new Set(allSelectedPlayers);
+  if (uniquePlayers.size !== 4) {
+    addToast('No puede haber jugadores repetidos entre los equipos', 'error');
+    return;
+  }
+
+  setIsLoading(true);
+  try {
+    const newMatch = {
+      id: `match-${Date.now()}`,
+      team1: customMatch.team1,
+      team2: customMatch.team2,
+      scoreTeam1: null,
+      scoreTeam2: null,
+      status: 'pending',
+      createdAt: new Date().toISOString()
+    };
+
+    await actions.addTournamentMatch(localTournament.id, newMatch);
+    
+    setShowCustomMatchForm(false);
+    setCustomMatch({ team1: [], team2: [] });
+    addToast('¡Partido personalizado añadido correctamente! 🎯', 'success');
+  } catch (error) {
+    console.error('❌ Error añadiendo partido personalizado:', error);
+    addToast('Error al añadir partido: ' + error.message, 'error');
+  } finally {
+    setIsLoading(false);
+  }
+};
+
+// 🎯 FUNCIÓN PARA SELECCIONAR/DESELECCIONAR JUGADOR EN EQUIPO PERSONALIZADO
+const togglePlayerInCustomMatch = (playerId, team) => {
+  setCustomMatch(prev => {
+    const currentTeam = prev[team];
+    const otherTeam = prev[team === 'team1' ? 'team2' : 'team1'];
+    
+    // Si el jugador ya está en este equipo, quitarlo
+    if (currentTeam.includes(playerId)) {
+      return {
+        ...prev,
+        [team]: currentTeam.filter(id => id !== playerId)
+      };
+    }
+    
+    // Si el jugador está en el otro equipo, no permitir moverlo
+    if (otherTeam.includes(playerId)) {
+      addToast('Este jugador ya está en el otro equipo', 'warning');
+      return prev;
+    }
+    
+    // Si el equipo ya tiene 2 jugadores, no permitir agregar más
+    if (currentTeam.length >= 2) {
+      addToast(`El ${team === 'team1' ? 'equipo 1' : 'equipo 2'} ya tiene 2 jugadores`, 'warning');
+      return prev;
+    }
+    
+    // Agregar jugador al equipo
+    return {
+      ...prev,
+      [team]: [...currentTeam, playerId]
+    };
+  });
+};
+
+// 🎯 FUNCIÓN PARA OBTENER JUGADORES DISPONIBLES PARA SELECCIÓN PERSONALIZADA
+const getAvailablePlayersForCustomMatch = () => {
+  const allPlayers = [...localTournament.players, ...localTournament.guestPlayers.map((_, idx) => `guest-${idx}`)];
+  const selectedPlayers = [...customMatch.team1, ...customMatch.team2];
+  
+  return allPlayers.filter(playerId => !selectedPlayers.includes(playerId));
+};
+
   const handleDeleteMatch = async (matchId) => {
     if (localTournament.status === 'completed') {
       addToast('No puedes eliminar partidos en un torneo completado', 'warning');
@@ -9015,66 +9351,128 @@ function TournamentPlay() {
       }}>
 
         {/* Botones con estilo unificado */}
-        {localTournament.status === 'active' && (
-          <div className="glass-card animate-fadeInUp" style={{ 
-            padding: '20px',
-            marginBottom: '24px',
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            flexWrap: 'wrap',
-            gap: '16px'
-          }}>
-            <button
-              onClick={addAdditionalMatch}
-              disabled={isLoading}
-              style={{
-                padding: '12px 20px',
-                border: 'none',
-                background: 'linear-gradient(135deg, var(--secondary), var(--secondary-dark))',
-                color: 'white',
-                borderRadius: 'var(--border-radius)',
-                fontWeight: '600',
-                cursor: isLoading ? 'not-allowed' : 'pointer',
-                transition: 'var(--transition)',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                boxShadow: 'var(--shadow)',
-                opacity: isLoading ? 0.7 : 1
-              }}
-              onMouseOver={(e) => {
-                if (!isLoading) {
-                  e.target.style.transform = 'translateY(-2px)';
-                  e.target.style.boxShadow = 'var(--shadow-lg)';
-                }
-              }}
-              onMouseOut={(e) => {
-                if (!isLoading) {
-                  e.target.style.transform = 'translateY(0)';
-                  e.target.style.boxShadow = 'var(--shadow)';
-                }
-              }}
-            >
-              {isLoading ? (
-                <>
-                  <div style={{
-                    width: '16px',
-                    height: '16px',
-                    border: '2px solid transparent',
-                    borderTop: '2px solid white',
-                    borderRadius: '50%',
-                    animation: 'spin 1s linear infinite'
-                  }}></div>
-                  Añadiendo...
-                </>
-              ) : (
-                <>
-                  <Icon name="add" size={16} color="white" />
-                  Añadir Partido Inteligente
-                </>
-              )}
-            </button>
+{localTournament.status === 'active' && (
+  <div className="glass-card animate-fadeInUp" style={{ 
+    padding: '20px',
+    marginBottom: '24px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '16px'
+  }}>
+    {/* Título de la sección */}
+    <h3 style={{ 
+      color: 'var(--text-primary)', 
+      margin: 0,
+      fontSize: '18px',
+      display: 'flex',
+      alignItems: 'center',
+      gap: '8px'
+    }}>
+      <Icon name="add" size={20} color="var(--primary)" />
+      Añadir Partidos
+    </h3>
+    
+    {/* Botones en línea */}
+    <div style={{ 
+      display: 'flex', 
+      gap: '12px', 
+      flexWrap: 'wrap'
+    }}>
+      {/* Botón Partido Inteligente */}
+      <button
+        onClick={addAdditionalMatch}
+        disabled={isLoading}
+        style={{
+          padding: '12px 20px',
+          border: 'none',
+          background: 'linear-gradient(135deg, var(--secondary), var(--secondary-dark))',
+          color: 'white',
+          borderRadius: 'var(--border-radius)',
+          fontWeight: '600',
+          cursor: isLoading ? 'not-allowed' : 'pointer',
+          transition: 'var(--transition)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '8px',
+          boxShadow: 'var(--shadow)',
+          opacity: isLoading ? 0.7 : 1,
+          flex: 1,
+          minWidth: '200px',
+          justifyContent: 'center'
+        }}
+        onMouseOver={(e) => {
+          if (!isLoading) {
+            e.target.style.transform = 'translateY(-2px)';
+            e.target.style.boxShadow = 'var(--shadow-lg)';
+          }
+        }}
+        onMouseOut={(e) => {
+          if (!isLoading) {
+            e.target.style.transform = 'translateY(0)';
+            e.target.style.boxShadow = 'var(--shadow)';
+          }
+        }}
+      >
+        {isLoading ? (
+          <>
+            <div style={{
+              width: '16px',
+              height: '16px',
+              border: '2px solid transparent',
+              borderTop: '2px solid white',
+              borderRadius: '50%',
+              animation: 'spin 1s linear infinite'
+            }}></div>
+            Añadiendo...
+          </>
+        ) : (
+          <>
+            <Icon name="magic" size={16} color="white" />
+            + Partido Inteligente
+          </>
+        )}
+      </button>
+
+      {/* Botón Partido Personalizado */}
+      <button
+        onClick={() => setShowCustomMatchForm(true)}
+        disabled={isLoading}
+        style={{
+          padding: '12px 20px',
+          border: '2px solid var(--primary)',
+          background: 'transparent',
+          color: 'var(--primary)',
+          borderRadius: 'var(--border-radius)',
+          fontWeight: '600',
+          cursor: isLoading ? 'not-allowed' : 'pointer',
+          transition: 'var(--transition)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '8px',
+          flex: 1,
+          minWidth: '200px',
+          justifyContent: 'center'
+        }}
+        onMouseOver={(e) => {
+          if (!isLoading) {
+            e.target.style.background = 'var(--primary)';
+            e.target.style.color = 'white';
+            e.target.style.transform = 'translateY(-2px)';
+          }
+        }}
+        onMouseOut={(e) => {
+          if (!isLoading) {
+            e.target.style.background = 'transparent';
+            e.target.style.color = 'var(--primary)';
+            e.target.style.transform = 'translateY(0)';
+          }
+        }}
+      >
+        <Icon name="users" size={16} color="currentColor" />
+        Partido Personalizado
+      </button>
+    </div>
+
 
             {hasUnsavedChanges && (
               <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
@@ -9767,6 +10165,401 @@ function TournamentPlay() {
           100% { transform: rotate(360deg); }
         }
       `}</style>
+
+      {/* Modal para Partido Personalizado */}
+      {showCustomMatchForm && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(0, 0, 0, 0.7)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 2000,
+          padding: '20px'
+        }}>
+          <div 
+            className="glass-card animate-scaleIn"
+            style={{ 
+              padding: '24px',
+              maxWidth: '600px',
+              width: '100%',
+              maxHeight: '90vh',
+              overflowY: 'auto'
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ 
+              display: 'flex', 
+              justifyContent: 'space-between', 
+              alignItems: 'center',
+              marginBottom: '20px'
+            }}>
+              <h3 style={{ 
+                color: 'var(--text-primary)', 
+                margin: 0,
+                fontSize: '20px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '10px'
+              }}>
+                <Icon name="users" size={20} color="var(--primary)" />
+                Crear Partido Personalizado
+              </h3>
+              <button
+                onClick={() => {
+                  setShowCustomMatchForm(false);
+                  setCustomMatch({ team1: [], team2: [] });
+                }}
+                disabled={isLoading}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  fontSize: '20px',
+                  cursor: 'pointer',
+                  color: 'var(--text-secondary)',
+                  padding: '5px',
+                  borderRadius: '50%'
+                }}
+              >
+                <Icon name="close" size={20} color="currentColor" />
+              </button>
+            </div>
+
+            {/* Información de selección */}
+            <div style={{ 
+              background: 'rgba(99, 102, 241, 0.1)',
+              padding: '16px',
+              borderRadius: 'var(--border-radius)',
+              marginBottom: '20px',
+              border: '1px solid var(--primary)'
+            }}>
+              <div style={{ 
+                display: 'flex', 
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                flexWrap: 'wrap',
+                gap: '8px'
+              }}>
+                <span style={{ color: 'var(--text-primary)', fontWeight: '600' }}>
+                  Selecciona 2 jugadores para cada equipo
+                </span>
+                <div style={{ display: 'flex', gap: '16px', fontSize: '14px' }}>
+                  <span style={{ color: 'var(--primary)', fontWeight: '600' }}>
+                    Equipo 1: {customMatch.team1.length}/2
+                  </span>
+                  <span style={{ color: 'var(--secondary)', fontWeight: '600' }}>
+                    Equipo 2: {customMatch.team2.length}/2
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Lista de jugadores disponibles */}
+            <div style={{ marginBottom: '24px' }}>
+              <h4 style={{ 
+                color: 'var(--text-primary)', 
+                marginBottom: '12px',
+                fontSize: '16px'
+              }}>
+                Jugadores Disponibles ({getAvailablePlayersForCustomMatch().length})
+              </h4>
+              <div style={{ 
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))',
+                gap: '8px',
+                maxHeight: '200px',
+                overflowY: 'auto',
+                padding: '12px',
+                border: '1px solid var(--border-color)',
+                borderRadius: 'var(--border-radius)'
+              }}>
+                {getAvailablePlayersForCustomMatch().map(playerId => (
+                  <div
+                    key={playerId}
+                    style={{
+                      padding: '12px',
+                      border: '2px solid var(--border-color)',
+                      borderRadius: 'var(--border-radius)',
+                      background: 'var(--card-bg)',
+                      cursor: 'pointer',
+                      transition: 'var(--transition)',
+                      textAlign: 'center'
+                    }}
+                    onClick={() => {
+                      // Si no hay equipo seleccionado o equipo1 está lleno, ir a equipo2
+                      if (customMatch.team1.length < 2) {
+                        togglePlayerInCustomMatch(playerId, 'team1');
+                      } else {
+                        togglePlayerInCustomMatch(playerId, 'team2');
+                      }
+                    }}
+                    onMouseOver={(e) => {
+                      e.target.style.borderColor = 'var(--primary)';
+                      e.target.style.transform = 'translateY(-2px)';
+                    }}
+                    onMouseOut={(e) => {
+                      e.target.style.borderColor = 'var(--border-color)';
+                      e.target.style.transform = 'translateY(0)';
+                    }}
+                  >
+                    <div style={{ 
+                      display: 'flex', 
+                      alignItems: 'center', 
+                      gap: '8px',
+                      justifyContent: 'center'
+                    }}>
+                      <div style={{
+                        width: '24px',
+                        height: '24px',
+                        borderRadius: '50%',
+                        background: getPlayerProfilePicture(playerId) ? 
+                          `url(${getPlayerProfilePicture(playerId)}) center/cover` :
+                          'linear-gradient(135deg, var(--primary), var(--primary-dark))',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        color: 'white',
+                        fontSize: getPlayerProfilePicture(playerId) ? '0' : '12px',
+                        fontWeight: '600'
+                      }}>
+                        {!getPlayerProfilePicture(playerId) && getPlayerAvatar(playerId)}
+                      </div>
+                      <span style={{ 
+                        color: 'var(--text-primary)',
+                        fontWeight: '600',
+                        fontSize: '13px'
+                      }}>
+                        {getPlayerName(playerId)}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Equipos seleccionados */}
+            <div style={{ 
+              display: 'grid',
+              gridTemplateColumns: '1fr 1fr',
+              gap: '16px',
+              marginBottom: '24px'
+            }}>
+              {/* Equipo 1 */}
+              <div style={{
+                padding: '16px',
+                background: 'rgba(239, 68, 68, 0.1)',
+                borderRadius: 'var(--border-radius)',
+                border: '2px solid #ef4444'
+              }}>
+                <h4 style={{ 
+                  color: '#ef4444', 
+                  marginBottom: '12px',
+                  fontSize: '14px',
+                  fontWeight: '600',
+                  textAlign: 'center'
+                }}>
+                  Equipo 1 ({customMatch.team1.length}/2)
+                </h4>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {customMatch.team1.map(playerId => (
+                    <div
+                      key={playerId}
+                      style={{
+                        padding: '10px',
+                        background: 'white',
+                        borderRadius: 'var(--border-radius)',
+                        border: '1px solid #ef4444',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        cursor: 'pointer'
+                      }}
+                      onClick={() => togglePlayerInCustomMatch(playerId, 'team1')}
+                    >
+                      <div style={{
+                        width: '20px',
+                        height: '20px',
+                        borderRadius: '50%',
+                        background: getPlayerProfilePicture(playerId) ? 
+                          `url(${getPlayerProfilePicture(playerId)}) center/cover` :
+                          '#ef4444',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        color: 'white',
+                        fontSize: getPlayerProfilePicture(playerId) ? '0' : '10px',
+                        fontWeight: '600'
+                      }}>
+                        {!getPlayerProfilePicture(playerId) && getPlayerAvatar(playerId)}
+                      </div>
+                      <span style={{ 
+                        color: '#ef4444',
+                        fontWeight: '600',
+                        fontSize: '12px',
+                        flex: 1
+                      }}>
+                        {getPlayerName(playerId)}
+                      </span>
+                      <Icon name="close" size={12} color="#ef4444" />
+                    </div>
+                  ))}
+                  {customMatch.team1.length === 0 && (
+                    <div style={{ 
+                      textAlign: 'center', 
+                      color: '#ef4444',
+                      fontSize: '12px',
+                      padding: '10px'
+                    }}>
+                      Haz clic en un jugador para agregar al Equipo 1
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Equipo 2 */}
+              <div style={{
+                padding: '16px',
+                background: 'rgba(59, 130, 246, 0.1)',
+                borderRadius: 'var(--border-radius)',
+                border: '2px solid #3b82f6'
+              }}>
+                <h4 style={{ 
+                  color: '#3b82f6', 
+                  marginBottom: '12px',
+                  fontSize: '14px',
+                  fontWeight: '600',
+                  textAlign: 'center'
+                }}>
+                  Equipo 2 ({customMatch.team2.length}/2)
+                </h4>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {customMatch.team2.map(playerId => (
+                    <div
+                      key={playerId}
+                      style={{
+                        padding: '10px',
+                        background: 'white',
+                        borderRadius: 'var(--border-radius)',
+                        border: '1px solid #3b82f6',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        cursor: 'pointer'
+                      }}
+                      onClick={() => togglePlayerInCustomMatch(playerId, 'team2')}
+                    >
+                      <div style={{
+                        width: '20px',
+                        height: '20px',
+                        borderRadius: '50%',
+                        background: getPlayerProfilePicture(playerId) ? 
+                          `url(${getPlayerProfilePicture(playerId)}) center/cover` :
+                          '#3b82f6',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        color: 'white',
+                        fontSize: getPlayerProfilePicture(playerId) ? '0' : '10px',
+                        fontWeight: '600'
+                      }}>
+                        {!getPlayerProfilePicture(playerId) && getPlayerAvatar(playerId)}
+                      </div>
+                      <span style={{ 
+                        color: '#3b82f6',
+                        fontWeight: '600',
+                        fontSize: '12px',
+                        flex: 1
+                      }}>
+                        {getPlayerName(playerId)}
+                      </span>
+                      <Icon name="close" size={12} color="#3b82f6" />
+                    </div>
+                  ))}
+                  {customMatch.team2.length === 0 && (
+                    <div style={{ 
+                      textAlign: 'center', 
+                      color: '#3b82f6',
+                      fontSize: '12px',
+                      padding: '10px'
+                    }}>
+                      Haz clic en un jugador para agregar al Equipo 2
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Botones de acción */}
+            <div style={{ display: 'flex', gap: '12px' }}>
+              <button
+                onClick={addCustomMatch}
+                disabled={isLoading || customMatch.team1.length !== 2 || customMatch.team2.length !== 2}
+                style={{
+                  flex: 1,
+                  padding: '14px',
+                  border: 'none',
+                  background: customMatch.team1.length === 2 && customMatch.team2.length === 2 
+                    ? 'linear-gradient(135deg, var(--primary), var(--primary-dark))'
+                    : 'var(--border-color)',
+                  color: 'white',
+                  borderRadius: 'var(--border-radius)',
+                  fontWeight: '600',
+                  cursor: (customMatch.team1.length === 2 && customMatch.team2.length === 2 && !isLoading) 
+                    ? 'pointer' : 'not-allowed',
+                  transition: 'var(--transition)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '8px',
+                  opacity: isLoading ? 0.7 : 1
+                }}
+              >
+                {isLoading ? (
+                  <>
+                    <div style={{
+                      width: '16px',
+                      height: '16px',
+                      border: '2px solid transparent',
+                      borderTop: '2px solid white',
+                      borderRadius: '50%',
+                      animation: 'spin 1s linear infinite'
+                    }}></div>
+                    Creando...
+                  </>
+                ) : (
+                  <>
+                    <Icon name="check" size={16} color="white" />
+                    Crear Partido Personalizado
+                  </>
+                )}
+              </button>
+              <button
+                onClick={() => {
+                  setShowCustomMatchForm(false);
+                  setCustomMatch({ team1: [], team2: [] });
+                }}
+                disabled={isLoading}
+                style={{
+                  padding: '14px 20px',
+                  border: '2px solid var(--border-color)',
+                  borderRadius: 'var(--border-radius)',
+                  background: 'transparent',
+                  color: 'var(--text-primary)',
+                  cursor: 'pointer',
+                  fontWeight: '600'
+                }}
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }
@@ -10350,27 +11143,48 @@ function ClubRanking() {
   );
 }
 
-// Componente principal App
+
+
+// Componente principal App - VERSIÓN SIMPLIFICADA
 function App() {
   const [appLoading, setAppLoading] = useState(true);
+  const [initialAuthCheck, setInitialAuthCheck] = useState(false);
 
   useEffect(() => {
-    const checkAuthState = () => {
-      const savedUser = localStorage.getItem('padel-user');
-      const rememberMe = localStorage.getItem('padel-remember') === 'true';
-      
-      if (savedUser && rememberMe) {
-        try {
-          const userData = JSON.parse(savedUser);
-          console.log('🔄 Recuperando sesión guardada:', userData.name);
-        } catch (error) {
-          console.error('Error recuperando sesión:', error);
-          localStorage.removeItem('padel-user');
-          localStorage.removeItem('padel-remember');
+    const checkAuthState = async () => {
+      try {
+        console.log('🔄 Verificando estado de autenticación...');
+        
+        // Verificar si hay sesión guardada localmente
+        const savedUser = localStorage.getItem('padel-user');
+        const rememberMe = localStorage.getItem('padel-remember') === 'true';
+        
+        if (savedUser && rememberMe) {
+          try {
+            const userData = JSON.parse(savedUser);
+            console.log('🔄 Sesión guardada encontrada:', userData.name);
+            
+            // Solo marcamos que la verificación inicial está completa
+            // El AppProvider manejará la autenticación real
+            console.log('✅ Sesión local disponible');
+          } catch (error) {
+            console.error('❌ Error recuperando sesión local:', error);
+            // Limpiar datos corruptos
+            localStorage.removeItem('padel-user');
+            localStorage.removeItem('padel-remember');
+            localStorage.removeItem('padel-remembered-credentials');
+          }
+        } else {
+          console.log('🔐 No hay sesión guardada');
         }
+        
+        setAppLoading(false);
+        setInitialAuthCheck(true);
+      } catch (error) {
+        console.error('❌ Error verificando autenticación:', error);
+        setAppLoading(false);
+        setInitialAuthCheck(true);
       }
-      
-      setAppLoading(false);
     };
 
     checkAuthState();
