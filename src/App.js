@@ -3095,7 +3095,6 @@ const calculateClubRanking = () => {
 }
 
 // Componente de Torneos - VERSIÓN COMPLETA CON NUEVO DISEÑO
-// Componente de Torneos - VERSIÓN MEJORADA
 function Tournaments() {
   // ✅ ESTADOS NECESARIOS
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -3104,7 +3103,8 @@ function Tournaments() {
   const [newTournament, setNewTournament] = useState({ 
     name: '', 
     players: [],
-    guestPlayers: [] 
+    guestPlayers: [],
+    matchCount: 8 // 🆕 VALOR POR DEFECTO
   });
   const [newGuestPlayer, setNewGuestPlayer] = useState('');
   const [actionLoading, setActionLoading] = useState(null);
@@ -3117,358 +3117,286 @@ function Tournaments() {
   const activeClub = getters.getActiveClub();
   const clubMembers = activeClub ? getters.getClubMembers(activeClub.id) : [];
   
+  // 🆕 CALCULAR TOTAL DE JUGADORES (aquí va la línea que falta)
+  const totalPlayers = newTournament.players.length + newTournament.guestPlayers.length;
+  
   // Obtener torneos correctamente
   const allTournaments = state.tournaments || [];
   const activeTournaments = allTournaments.filter(t => t.status === 'active');
   const completedTournaments = allTournaments.filter(t => t.status === 'completed');
+  
 
-// 🎯 FUNCIÓN MEJORADA - GRUPO INTEGRADO + MEZCLA NATURAL + EQUILIBRIO
-// 🎯 FUNCIÓN CON VALIDACIÓN COMPLETA DE DATOS
-const generateInitialMatches = (playerIds) => {
+
+// 🎯 ALGORITMO DE EQUILIBRIO PERFECTO - DISTRIBUCIÓN ESTRICTA
+const generateInitialMatches = (playerIds, matchCount) => {
+  console.log('🎯 INICIANDO ALGORITMO DE EQUILIBRIO PERFECTO');
+  console.log('👥 Jugadores:', playerIds.length, 'Partidos:', matchCount);
+  
+  if (playerIds.length < 4) {
+    console.log('❌ No hay suficientes jugadores para crear partidos');
+    return [];
+  }
+
   const matches = [];
   const totalPlayers = playerIds.length;
   
-  if (totalPlayers < 4) {
-    console.log('❌ No hay suficientes jugadores para crear partidos');
-    return matches;
-  }
-
-  // 🎯 Tu configuración de partidos actualizada
-  const calculateOptimalMatches = (totalPlayers) => {
-    if (totalPlayers === 4) return 6;
-    if (totalPlayers === 5) return 6;
-    if (totalPlayers === 6) return 7;
-    if (totalPlayers === 7) return 7;
-    if (totalPlayers === 8) return 8;
-    if (totalPlayers === 9) return 8;
-    if (totalPlayers === 10) return 10;
-    if (totalPlayers === 11) return 12;
-    if (totalPlayers === 12) return 12;
-    return Math.min(15, Math.floor(totalPlayers * 1.2));
-  };
-
-  const matchesToCreate = calculateOptimalMatches(totalPlayers);
+  // 🎯 CALCULAR DISTRIBUCIÓN IDEAL
+  const totalPlayerSlots = matchCount * 4;
+  const baseMatchesPerPlayer = Math.floor(totalPlayerSlots / totalPlayers);
+  const extraSlots = totalPlayerSlots % totalPlayers;
   
-  console.log(`🎯 Creando ${matchesToCreate} partidos para ${totalPlayers} jugadores`);
-  console.log(`🎯 Objetivo: EQUILIBRIO ESTRICTO + DATOS VÁLIDOS`);
-
-  // Estructuras para tracking
-  const matchesPlayed = {};
-  const lastMatchPlayed = {};
-  const partnerships = {};
-  const consecutivePlays = {};
-
-  // Inicializar contadores
+  console.log(`📊 Objetivo: ${baseMatchesPerPlayer} partidos base + ${extraSlots} jugadores extra`);
+  
+  // 🎯 INICIALIZAR CONTADORES ESTRICTOS
+  const matchesPerPlayer = {};
+  const playerQueue = [...playerIds];
+  const availablePlayers = new Set(playerIds);
+  
   playerIds.forEach(player => {
-    matchesPlayed[player] = 0;
-    lastMatchPlayed[player] = -3;
-    partnerships[player] = {};
-    consecutivePlays[player] = 0;
+    matchesPerPlayer[player] = 0;
+  });
+  
+  // 🎯 ASIGNAR PARTIDOS EXTRA A JUGADORES ALEATORIOS
+  const playersWithExtra = new Set();
+  const shuffledPlayers = [...playerIds].sort(() => Math.random() - 0.5);
+  
+  for (let i = 0; i < extraSlots; i++) {
+    playersWithExtra.add(shuffledPlayers[i]);
+  }
+  
+  // 🎯 DEFINIR META EXACTA PARA CADA JUGADOR
+  const playerTargets = {};
+  playerIds.forEach(player => {
+    playerTargets[player] = playersWithExtra.has(player) ? baseMatchesPerPlayer + 1 : baseMatchesPerPlayer;
+  });
+  
+  console.log('🎯 Metas por jugador:', playerTargets);
+
+  // 🎯 ESTRUCTURAS PARA DIVERSIDAD
+  const partnershipCount = {};
+  const oppositionCount = {};
+  const lastPlayed = {};
+  
+  playerIds.forEach(player => {
+    partnershipCount[player] = {};
+    oppositionCount[player] = {};
+    lastPlayed[player] = -10;
+    playerIds.forEach(other => {
+      if (other !== player) {
+        partnershipCount[player][other] = 0;
+        oppositionCount[player][other] = 0;
+      }
+    });
   });
 
-  // ✅ Verificar si el partido es válido
-  const isValidMatch = (team1, team2, partnerships) => {
-    // Validar que los equipos existen y tienen 2 jugadores cada uno
-    if (!team1 || !team2 || team1.length !== 2 || team2.length !== 2) {
-      return false;
-    }
-    
-    // Validar que todos los jugadores existen
-    const allPlayers = [...team1, ...team2];
-    if (allPlayers.some(player => !player || player === '')) {
-      return false;
-    }
-    
-    const uniquePlayers = new Set(allPlayers);
-    if (uniquePlayers.size !== 4) return false;
-    
-    const team1Key = team1.sort().join('-');
-    const team2Key = team2.sort().join('-');
-    
-    if (partnerships[team1Key] || partnerships[team2Key]) {
-      return false;
-    }
-    
-    return true;
-  };
-
-  // 🚫 VERIFICAR SI JUGADOR PUEDE JUGAR (EQUILIBRIO ESTRICTO)
-  const canPlayerPlay = (player, currentMatchIndex) => {
-    const currentMatches = matchesPlayed[player];
-    const minMatches = Math.min(...Object.values(matchesPlayed));
-    const maxMatches = Math.max(...Object.values(matchesPlayed));
-    
-    // ❌ NO PERMITIR si ya tiene 2+ partidos más que el mínimo
-    if (currentMatches >= minMatches + 2) {
-      return false;
-    }
-    
-    // ❌ NO PERMITIR si ya jugó 2 seguidos y hay otros que necesitan jugar
-    if (consecutivePlays[player] >= 2) {
-      const playersWithLessMatches = playerIds.filter(p => 
-        matchesPlayed[p] < currentMatches
-      );
-      if (playersWithLessMatches.length > 0) {
-        return false;
-      }
-    }
-    
-    return true;
-  };
-
-  // 🎯 OBTENER JUGADORES ELEGIBLES (CON EQUILIBRIO ESTRICTO)
-  const getEligiblePlayers = (playerIds, currentMatchIndex) => {
-    const minMatches = Math.min(...Object.values(matchesPlayed));
-    
+  // 🎯 FUNCIÓN PARA OBTENER JUGADORES CON MÁS PRIORIDAD
+  const getPriorityPlayers = (currentMatchIndex) => {
     return playerIds
-      .map(player => ({
-        player,
-        matches: matchesPlayed[player],
-        lastPlayed: lastMatchPlayed[player],
-        waitTime: currentMatchIndex - lastMatchPlayed[player],
-        isEligible: canPlayerPlay(player, currentMatchIndex),
-        priority: 0
-      }))
-      .filter(playerInfo => playerInfo.isEligible)
-      .sort((a, b) => {
-        a.priority = 0;
-        b.priority = 0;
+      .filter(player => matchesPerPlayer[player] < playerTargets[player])
+      .map(player => {
+        const priority = 
+          // Prioridad máxima: jugadores que están por debajo de su meta
+          (playerTargets[player] - matchesPerPlayer[player]) * 100 +
+          // Prioridad media: tiempo desde último partido
+          (currentMatchIndex - lastPlayed[player]) * 10 +
+          // Aleatoriedad pequeña para desempates
+          Math.random() * 5;
         
-        // 🎯 PRIORIDAD MÁXIMA: Los que tienen MENOS partidos
-        a.priority += (minMatches - a.matches) * 10;
-        b.priority += (minMatches - b.matches) * 10;
-        
-        // +3 puntos si ha esperado 3+ partidos
-        if (a.waitTime >= 3) a.priority += 3;
-        if (b.waitTime >= 3) b.priority += 3;
-        
-        // +2 puntos si ha esperado 2 partidos
-        if (a.waitTime === 2) a.priority += 2;
-        if (b.waitTime === 2) b.priority += 2;
-        
-        // -5 puntos si ya jugó 2 seguidos
-        if (consecutivePlays[a.player] >= 2) a.priority -= 5;
-        if (consecutivePlays[b.player] >= 2) b.priority -= 5;
-        
-        if (a.priority !== b.priority) return b.priority - a.priority;
-        return Math.random() - 0.5;
+        return { player, priority };
       })
-      .map(item => item.player);
+      .sort((a, b) => b.priority - a.priority);
   };
 
-  // ⚖️ CREAR PARTIDO CON VALIDACIÓN DE DATOS
-  const createStrictBalancedMatch = (playerIds, currentMatchIndex) => {
-    const MAX_ATTEMPTS = 300;
+  // 🎯 FUNCIÓN PARA CALCULAR PUNTUACIÓN DE UN PARTIDO
+  const calculateMatchScore = (team1, team2) => {
+    let score = 1000; // Puntuación base alta
     
+    const allPlayers = [...team1, ...team2];
+    
+    // 🎯 PENALIZACIÓN MUY ALTA POR REPETIR COMPAÑEROS
+    team1.forEach(p1 => {
+      team1.forEach(p2 => {
+        if (p1 !== p2) {
+          score -= partnershipCount[p1][p2] * 100;
+        }
+      });
+    });
+    
+    team2.forEach(p1 => {
+      team2.forEach(p2 => {
+        if (p1 !== p2) {
+          score -= partnershipCount[p1][p2] * 100;
+        }
+      });
+    });
+    
+    // 🎯 PENALIZACIÓN ALTA POR REPETIR OPONENTES
+    team1.forEach(p1 => {
+      team2.forEach(p2 => {
+        score -= oppositionCount[p1][p2] * 50;
+      });
+    });
+    
+    // 🎯 BONO POR COMBINACIONES COMPLETAMENTE NUEVAS
+    const isCompletelyNew = allPlayers.every(player => {
+      const teammates = team1.includes(player) ? team1 : team2;
+      const opponents = team1.includes(player) ? team2 : team1;
+      
+      return teammates.every(t => t === player || partnershipCount[player][t] === 0) &&
+             opponents.every(o => oppositionCount[player][o] === 0);
+    });
+    
+    if (isCompletelyNew) {
+      score += 200;
+    }
+    
+    return Math.max(0, score);
+  };
+
+  // 🎯 FUNCIÓN PARA GENERAR EL MEJOR PARTIDO POSIBLE
+  const generateBalancedMatch = (currentMatchIndex) => {
+    const priorityPlayers = getPriorityPlayers(currentMatchIndex);
+    
+    if (priorityPlayers.length < 4) {
+      console.log('⚠️ No hay suficientes jugadores disponibles');
+      return null;
+    }
+
+    let bestMatch = null;
+    let bestScore = -1;
+    const MAX_ATTEMPTS = 500;
+
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-      let eligiblePlayers = getEligiblePlayers(playerIds, currentMatchIndex);
-      
-      if (eligiblePlayers.length < 4 && attempt > 100) {
-        console.log(`   ⚠️  Relajando reglas para partido ${currentMatchIndex + 1}`);
-        eligiblePlayers = [...playerIds].sort((a, b) => 
-          matchesPlayed[a] - matchesPlayed[b]
-        );
-      }
-      
-      const candidateCount = Math.min(12, eligiblePlayers.length);
-      const candidates = eligiblePlayers.slice(0, candidateCount);
-      
-      for (let comboAttempt = 0; comboAttempt < 50; comboAttempt++) {
-        const shuffled = [...candidates].sort(() => Math.random() - 0.5);
-        const team1 = [shuffled[0], shuffled[1]];
-        const team2 = [shuffled[2], shuffled[3]];
+      // Tomar jugadores prioritarios y mezclar
+      const candidates = priorityPlayers
+        .slice(0, Math.min(12, priorityPlayers.length))
+        .sort(() => Math.random() - 0.5)
+        .map(p => p.player);
+
+      if (candidates.length < 4) continue;
+
+      // Probar diferentes combinaciones de equipos
+      const formations = [
+        { team1: [candidates[0], candidates[1]], team2: [candidates[2], candidates[3]] },
+        { team1: [candidates[0], candidates[2]], team2: [candidates[1], candidates[3]] },
+        { team1: [candidates[0], candidates[3]], team2: [candidates[1], candidates[2]] }
+      ];
+
+      for (const formation of formations) {
+        const score = calculateMatchScore(formation.team1, formation.team2);
         
-        if (isValidMatch(team1, team2, partnerships)) {
-          return { team1, team2 };
+        if (score > bestScore) {
+          bestScore = score;
+          bestMatch = formation;
+        }
+        
+        // Si encontramos un partido perfecto, usarlo inmediatamente
+        if (score > 800) {
+          return bestMatch;
         }
       }
     }
-    
-    // Último recurso con validación
-    const sortedByUsage = [...playerIds].sort((a, b) => 
-      matchesPlayed[a] - matchesPlayed[b]
-    );
-    
-    // Asegurar que tenemos al menos 4 jugadores válidos
-    const validPlayers = sortedByUsage.filter(player => player && player !== '');
-    if (validPlayers.length < 4) {
-      console.log('❌ ERROR: No hay suficientes jugadores válidos');
-      return null;
-    }
-    
-    return {
-      team1: [validPlayers[0], validPlayers[1]],
-      team2: [validPlayers[2], validPlayers[3]]
-    };
+
+    return bestMatch;
   };
 
-  // 🔄 Actualizar contadores
-  const updateMatchCounters = (team1, team2, currentMatchIndex) => {
-    // Validar equipos antes de actualizar
-    if (!team1 || !team2 || team1.length !== 2 || team2.length !== 2) {
-      console.log('❌ ERROR: Equipos inválidos en updateMatchCounters');
-      return;
-    }
-    
-    const allPlayers = [...team1, ...team2];
-    const nonPlayers = playerIds.filter(p => !allPlayers.includes(p));
-    
-    allPlayers.forEach(player => {
-      if (player && player !== '') {
-        matchesPlayed[player]++;
-        lastMatchPlayed[player] = currentMatchIndex;
-        consecutivePlays[player]++;
-      }
+  // 🎯 FUNCIÓN PARA ACTUALIZAR ESTADÍSTICAS
+  const updateStats = (team1, team2, matchIndex) => {
+    // Actualizar contadores de partidos
+    [...team1, ...team2].forEach(player => {
+      matchesPerPlayer[player]++;
+      lastPlayed[player] = matchIndex;
+    });
+
+    // Actualizar historial de compañeros
+    team1.forEach(p1 => {
+      team1.forEach(p2 => {
+        if (p1 !== p2) {
+          partnershipCount[p1][p2]++;
+        }
+      });
     });
     
-    nonPlayers.forEach(player => {
-      if (player && player !== '') {
-        consecutivePlays[player] = 0;
-      }
+    team2.forEach(p1 => {
+      team2.forEach(p2 => {
+        if (p1 !== p2) {
+          partnershipCount[p1][p2]++;
+        }
+      });
     });
-    
-    // Registrar parejas con validación
-    const team1Key = team1.sort().join('-');
-    const team2Key = team2.sort().join('-');
-    partnerships[team1Key] = true;
-    partnerships[team2Key] = true;
-    
-    partnerships[team1[0]] = partnerships[team1[0]] || {};
-    partnerships[team1[1]] = partnerships[team1[1]] || {};
-    partnerships[team2[0]] = partnerships[team2[0]] || {};
-    partnerships[team2[1]] = partnerships[team2[1]] || {};
-    
-    partnerships[team1[0]][team1[1]] = true;
-    partnerships[team1[1]][team1[0]] = true;
-    partnerships[team2[0]][team2[1]] = true;
-    partnerships[team2[1]][team2[0]] = true;
+
+    // Actualizar historial de oponentes
+    team1.forEach(p1 => {
+      team2.forEach(p2 => {
+        oppositionCount[p1][p2]++;
+        oppositionCount[p2][p1]++;
+      });
+    });
   };
 
-  // 🛡️ CREAR OBJETO DE PARTIDO CON DATOS VÁLIDOS
-  const createValidMatchObject = (match, matchIndex) => {
-    // Validar que el match existe y tiene la estructura correcta
-    if (!match || !match.team1 || !match.team2) {
-      console.log('❌ ERROR: Match object inválido');
-      return null;
-    }
+  // 🎯 CREAR LOS PARTIDOS CON EQUILIBRIO ESTRICTO
+  console.log('🎯 Generando partidos con equilibrio estricto...');
+  
+  for (let matchIndex = 0; matchIndex < matchCount; matchIndex++) {
+    const match = generateBalancedMatch(matchIndex);
     
-    // Validar que todos los jugadores existen
-    const allPlayers = [...match.team1, ...match.team2];
-    if (allPlayers.some(player => !player || player === '')) {
-      console.log('❌ ERROR: Jugadores inválidos en el partido');
-      return null;
+    if (!match) {
+      console.log(`❌ No se pudo generar partido ${matchIndex + 1}`);
+      break;
     }
-    
-    // Crear objeto con TODOS los campos requeridos
-    return {
+
+    const matchObject = {
       id: `match-${Date.now()}-${matchIndex}`,
       team1: match.team1,
       team2: match.team2,
-      scoreTeam1: 0,  // ❌ Cambié null por 0 (Firestore prefiere números)
-      scoreTeam2: 0,  // ❌ Cambié null por 0
+      scoreTeam1: 0,
+      scoreTeam2: 0,
       status: "pending",
       createdAt: new Date().toISOString(),
-      // Agregar campos que podrían faltar
       winner: null,
       rounds: [],
       completedAt: null
     };
-  };
-
-  // 📊 VERIFICAR EQUILIBRIO
-  const checkAndLogBalance = (currentMatchIndex) => {
-    const minMatches = Math.min(...Object.values(matchesPlayed));
-    const maxMatches = Math.max(...Object.values(matchesPlayed));
-    const imbalance = maxMatches - minMatches;
     
-    if (imbalance > 1) {
-      console.log(`   ⚠️  Alerta equilibrio: ${minMatches}-${maxMatches} partidos (diferencia: ${imbalance})`);
-    }
-  };
-
-  // 📊 REPORTE FINAL
-  const logStrictReport = (playerIds, totalMatches) => {
-    console.log('\n📊 INFORME DE EQUILIBRIO ESTRICTO');
-    console.log(`📈 Partidos totales: ${totalMatches}`);
+    matches.push(matchObject);
+    updateStats(match.team1, match.team2, matchIndex);
     
-    const playerStats = playerIds.map(player => ({
-      player,
-      matches: matchesPlayed[player],
-      maxConsecutive: consecutivePlays[player]
-    })).sort((a, b) => a.matches - b.matches);
-    
-    console.log('\n🎯 DISTRIBUCIÓN FINAL:');
-    playerStats.forEach(({ player, matches, maxConsecutive }) => {
-      const status = matches === Math.min(...playerStats.map(p => p.matches)) ? ' ⬇️' : 
-                    matches === Math.max(...playerStats.map(p => p.matches)) ? ' ⬆️' : '';
-      console.log(`   ${player}: ${matches} partidos${status}`);
-    });
-    
-    const minMatches = Math.min(...playerStats.map(p => p.matches));
-    const maxMatches = Math.max(...playerStats.map(p => p.matches));
-    const imbalance = maxMatches - minMatches;
-    
-    console.log(`\n⚖️ RESULTADO: ${minMatches}-${maxMatches} partidos (diferencia: ${imbalance})`);
-    
-    if (imbalance <= 1) {
-      console.log('   ✅ Excelente equilibrio');
-    } else {
-      console.log('   ⚠️ Oportunidad de mejora');
-    }
-  };
-
-  // 🎯 CREAR LOS PARTIDOS CON VALIDACIÓN COMPLETA
-  for (let matchIndex = 0; matchIndex < matchesToCreate; matchIndex++) {
-    const match = createStrictBalancedMatch(playerIds, matchIndex);
-    
-    if (match) {
-      const validMatchObject = createValidMatchObject(match, matchIndex);
-      
-      if (validMatchObject) {
-        matches.push(validMatchObject);
-        updateMatchCounters(match.team1, match.team2, matchIndex);
-        console.log(`✅ Partido ${matchIndex + 1}: ${match.team1.join('+')} vs ${match.team2.join('+')}`);
-        checkAndLogBalance(matchIndex);
-      } else {
-        console.log(`❌ ERROR: No se pudo crear objeto válido para partido ${matchIndex + 1}`);
-      }
-    } else {
-      console.log(`⚠️ No se pudo crear partido ${matchIndex + 1}`);
-      break;
-    }
+    console.log(`✅ Partido ${matchIndex + 1}: ${match.team1.map(p => getPlayerName(p)).join('+')} vs ${match.team2.map(p => getPlayerName(p)).join('+')}`);
   }
+
+  // 🎯 VERIFICACIÓN FINAL DE EQUILIBRIO
+  console.log('\n📊 VERIFICACIÓN FINAL DE EQUILIBRIO');
   
-  // Validación final de todos los partidos
-  const validMatches = matches.filter(match => 
-    match && 
-    match.team1 && Array.isArray(match.team1) && match.team1.length === 2 &&
-    match.team2 && Array.isArray(match.team2) && match.team2.length === 2 &&
-    match.scoreTeam1 !== undefined &&
-    match.scoreTeam2 !== undefined &&
-    match.status
-  );
+  const finalDistribution = playerIds.map(playerId => ({
+    player: getPlayerName(playerId),
+    actual: matchesPerPlayer[playerId],
+    target: playerTargets[playerId],
+    difference: matchesPerPlayer[playerId] - playerTargets[playerId]
+  })).sort((a, b) => a.actual - b.actual);
+
+  console.log('\n🎯 DISTRIBUCIÓN FINAL:');
+  finalDistribution.forEach(({ player, actual, target, difference }) => {
+    const status = difference === 0 ? '✅' : difference > 0 ? '⚠️' : '❌';
+    console.log(`   ${status} ${player}: ${actual} partidos (meta: ${target})`);
+  });
+
+  const minMatches = Math.min(...finalDistribution.map(p => p.actual));
+  const maxMatches = Math.max(...finalDistribution.map(p => p.actual));
+  const imbalance = maxMatches - minMatches;
   
-  if (validMatches.length !== matches.length) {
-    console.log(`⚠️ ADVERTENCIA: ${matches.length - validMatches.length} partidos inválidos fueron filtrados`);
+  console.log(`\n⚖️ RESULTADO: ${minMatches}-${maxMatches} partidos (diferencia: ${imbalance})`);
+  
+  if (imbalance === 0) {
+    console.log('   🎉 ¡EQUILIBRIO PERFECTO ALCANZADO!');
+  } else if (imbalance <= 1) {
+    console.log('   ✅ Excelente equilibrio');
+  } else {
+    console.log('   ⚠️ Equilibrio aceptable');
   }
-  
-  logStrictReport(playerIds, validMatches.length);
-  
-  return validMatches; // ← Devolver solo los partidos válidos
+
+  return matches;
 };
 
-// 🎯 Cálculo optimizado para diversidad
-const calculateMatchesForDiversity = (totalPlayers) => {
-  // Objetivo: Cada jugador juegue con la mayor variedad de compañeros
-  const possiblePairings = (totalPlayers * (totalPlayers - 1)) / 2;
-  const targetMatches = Math.min(
-    Math.floor(possiblePairings * 0.7), // 70% de combinaciones posibles
-    totalPlayers * 2, // Máximo 2 partidos por jugador en promedio
-    Math.max(4, totalPlayers) // Mínimo 4 partidos o igual a jugadores
-  );
-  
-  return Math.max(4, targetMatches);
-};
 
 // 🤝 Crear partido con máxima diversidad
 const createDiverseMatch = (playerIds, matchesPlayed, partnerships, oppositions) => {
@@ -3753,56 +3681,116 @@ const logPlayerDistribution = (playerIds, matchesPlayed) => {
     }
   };
 
-  // ✅ FUNCIÓN CORREGIDA PARA CREAR TORNEO
-  const handleCreateTournament = async (e) => {
-    e.preventDefault();
-    setIsSubmitting(true);
-    
-    if (newTournament.players.length + newTournament.guestPlayers.length < 4) {
-      addToast('Se necesitan al menos 4 jugadores para crear un torneo', 'warning');
+// 🆕 FUNCIÓN CORREGIDA PARA GENERAR NOMBRE AUTOMÁTICO DEL TORNEO
+const generateTournamentName = () => {
+  const today = new Date();
+  const dateStr = today.toLocaleDateString('es-ES', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric'
+  });
+  
+  // Contar torneos existentes hoy (solo los ya creados, no incluir el actual)
+  const todayTorneos = state.tournaments.filter(t => {
+    if (!t.createdAt) return false;
+    const torneoDate = new Date(t.createdAt);
+    return torneoDate.toDateString() === today.toDateString();
+  });
+  
+  const count = todayTorneos.length + 1; // +1 para el torneo actual
+  
+  // Si no hay torneos hoy, no mostrar número
+  if (count === 1) {
+    return `Torneo ${dateStr}`;
+  }
+  
+  return `Torneo ${dateStr} #${count}`;
+};
+
+// 🆕 FUNCIÓN PARA CALCULAR INFORMACIÓN PREDICTIVA
+const calculateTournamentInfo = (playerCount, matchCount) => {
+  if (playerCount < 4) {
+    return { avgMatchesPerPlayer: 0, estimatedDuration: '0 min' };
+  }
+  
+  // Cálculo aproximado de partidos por jugador
+  const totalPlayerSlots = matchCount * 4; // 4 jugadores por partido
+  const avgMatchesPerPlayer = (totalPlayerSlots / playerCount).toFixed(1);
+  
+  // Cálculo de duración estimada (12 minutos por partido)
+  const totalMinutes = matchCount * 12;
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  
+  let duration = '';
+  if (hours > 0) {
+    duration = `${hours}h ${minutes}min`;
+  } else {
+    duration = `${minutes} min`;
+  }
+  
+  return {
+    avgMatchesPerPlayer,
+    estimatedDuration: duration
+  };
+};
+
+// ✅ FUNCIÓN CORREGIDA PARA CREAR TORNEO CON CANTIDAD PERSONALIZADA
+const handleCreateTournament = async (e) => {
+  e.preventDefault();
+  setIsSubmitting(true);
+  
+  if (newTournament.players.length + newTournament.guestPlayers.length < 4) {
+    addToast('Se necesitan al menos 4 jugadores para crear un torneo', 'warning');
+    setIsSubmitting(false);
+    return;
+  }
+
+  try {
+    const activeClub = getters.getActiveClub();
+    if (!activeClub) {
+      addToast('No tienes un club activo seleccionado', 'error');
       setIsSubmitting(false);
       return;
     }
 
-    try {
-      const activeClub = getters.getActiveClub();
-      if (!activeClub) {
-        addToast('No tienes un club activo seleccionado', 'error');
-        setIsSubmitting(false);
-        return;
-      }
+    console.log('🏆 Creando torneo para club:', activeClub.id, activeClub.name);
 
-      console.log('🏆 Creando torneo para club:', activeClub.id, activeClub.name);
+    // 🆕 USAR NOMBRE AUTOMÁTICO SI NO SE ESPECIFICA UNO
+    const tournamentName = newTournament.name.trim() || generateTournamentName();
 
-      const tournamentData = {
-        name: newTournament.name,
-        clubId: activeClub.id,
-        createdBy: currentUser.id,
-        players: newTournament.players,
-        guestPlayers: newTournament.guestPlayers,
-        matches: generateInitialMatches([...newTournament.players, ...newTournament.guestPlayers.map((_, index) => `guest-${index}`)]),
-      };
+    const tournamentData = {
+      name: tournamentName,
+      clubId: activeClub.id,
+      createdBy: currentUser.id,
+      players: newTournament.players,
+      guestPlayers: newTournament.guestPlayers,
+      // 🆕 USAR CANTIDAD PERSONALIZADA DE PARTIDOS
+      matches: generateInitialMatches(
+        [...newTournament.players, ...newTournament.guestPlayers.map((_, index) => `guest-${index}`)],
+        newTournament.matchCount
+      ),
+    };
 
-      const createdTournament = await actions.createTournament(tournamentData);
-      
-      addToast(`¡Torneo "${createdTournament.name}" creado exitosamente! 🎉`, 'success');
-      
-      setShowCreateForm(false);
-      setNewTournament({ name: '', players: [], guestPlayers: [] });
-      
-      setTimeout(() => {
-        navigateWithTransition(`/tournament/${createdTournament.id}`, {
-          message: `Redirigiendo al torneo "${createdTournament.name}"...`
-        });
-      }, 1000);
-      
-    } catch (error) {
-      addToast('Error al crear el torneo: ' + error.message, 'error');
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
+    const createdTournament = await actions.createTournament(tournamentData);
+    
+    addToast(`¡Torneo "${createdTournament.name}" creado exitosamente! 🎉`, 'success');
+    
+    setShowCreateForm(false);
+    setNewTournament({ name: '', players: [], guestPlayers: [], matchCount: 8 });
+    
+    setTimeout(() => {
+      navigateWithTransition(`/tournament/${createdTournament.id}`, {
+        message: `Redirigiendo al torneo "${createdTournament.name}"...`
+      });
+    }, 1000);
+    
+  } catch (error) {
+    addToast('Error al crear el torneo: ' + error.message, 'error');
+  } finally {
+    setIsSubmitting(false);
+  }
+};
   // Función para completar torneo
   const handleCompleteTournament = async (tournament) => {
     const confirmed = window.confirm(
@@ -3959,34 +3947,37 @@ const logPlayerDistribution = (playerIds, matchesPlayed) => {
             </div>
             
             <form onSubmit={handleCreateTournament}>
-              <div style={{ marginBottom: '20px' }}>
-                <label style={{ 
-                  display: 'block', 
-                  marginBottom: '8px', 
-                  fontWeight: '600',
-                  color: 'var(--text-primary)'
-                }}>
-                  Nombre del Torneo *
-                </label>
-                <input
-                  type="text"
-                  placeholder="Ej: Torneo Primavera 2024"
-                  value={newTournament.name}
-                  onChange={(e) => setNewTournament({...newTournament, name: e.target.value})}
-                  disabled={isSubmitting}
-                  style={{ 
-                    width: '100%', 
-                    padding: '12px', 
-                    border: '2px solid var(--border-color)',
-                    borderRadius: 'var(--border-radius)',
-                    backgroundColor: 'var(--bg-primary)',
-                    color: 'var(--text-primary)',
-                    transition: 'var(--transition)',
-                    fontSize: '16px'
-                  }}
-                  required
-                />
-              </div>
+<div style={{ marginBottom: '20px' }}>
+  <label style={{ 
+    display: 'block', 
+    marginBottom: '8px', 
+    fontWeight: '600',
+    color: 'var(--text-primary)'
+  }}>
+    Nombre del Torneo *
+  </label>
+  <input
+    type="text"
+    placeholder={generateTournamentName()} // 🆕 PLACEHOLDER CON NOMBRE AUTOMÁTICO
+    value={newTournament.name}
+    onChange={(e) => setNewTournament({...newTournament, name: e.target.value})}
+    disabled={isSubmitting}
+    style={{ 
+      width: '100%', 
+      padding: '12px', 
+      border: '2px solid var(--border-color)',
+      borderRadius: 'var(--border-radius)',
+      backgroundColor: 'var(--bg-primary)',
+      color: 'var(--text-primary)',
+      transition: 'var(--transition)',
+      fontSize: '16px'
+    }}
+    // 🆕 EL CAMPO NO ES REQUIRED AHORA, PUEDE ESTAR VACÍO
+  />
+  <p style={{ color: 'var(--text-muted)', fontSize: '12px', marginTop: '6px' }}>
+    Déjalo vacío para usar nombre automático: <strong>{generateTournamentName()}</strong>
+  </p>
+</div>
 
               <div style={{ marginBottom: '20px' }}>
                 <label style={{ 
@@ -4145,32 +4136,91 @@ const logPlayerDistribution = (playerIds, matchesPlayed) => {
                 </div>
               </div>
 
-              <div style={{ 
-                padding: '14px',
-                background: 'rgba(99, 102, 241, 0.1)',
-                borderRadius: 'var(--border-radius)',
-                marginBottom: '20px',
-                border: '1px solid var(--primary)'
-              }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px', flexWrap: 'wrap', gap: '8px' }}>
-                  <span style={{ color: 'var(--text-primary)', fontWeight: '600', fontSize: '14px' }}>
-                    Total de Jugadores:
-                  </span>
-                  <span style={{ 
-                    color: (newTournament.players.length + newTournament.guestPlayers.length) >= 4 ? 'var(--secondary)' : 'var(--accent)',
-                    fontWeight: '700',
-                    fontSize: '16px'
-                  }}>
-                    {newTournament.players.length + newTournament.guestPlayers.length} / 4 mínimo
-                  </span>
-                </div>
-                {(newTournament.players.length + newTournament.guestPlayers.length) < 4 && (
-                  <p style={{ color: 'var(--accent)', fontSize: '13px', marginTop: '8px', fontWeight: '600' }}>
-                    ⚠️ Se necesitan al menos 4 jugadores
-                  </p>
-                )}
-              </div>
+<div style={{ marginBottom: '20px' }}>
+  <label style={{ 
+    display: 'block', 
+    marginBottom: '12px', 
+    fontWeight: '600',
+    color: 'var(--text-primary)'
+  }}>
+    Cantidad de Partidos: {newTournament.matchCount}
+  </label>
+  
+  <input
+    type="range"
+    min="4"
+    max="15"
+    value={newTournament.matchCount}
+    onChange={(e) => setNewTournament({...newTournament, matchCount: parseInt(e.target.value)})}
+    disabled={isSubmitting}
+    style={{ 
+      width: '100%', 
+      height: '8px',
+      borderRadius: '4px',
+      background: 'var(--primary)',
+      outline: 'none',
+      marginBottom: '12px'
+    }}
+  />
+  
+  <div style={{ 
+    display: 'flex', 
+    justifyContent: 'space-between',
+    fontSize: '12px',
+    color: 'var(--text-muted)',
+    marginBottom: '8px'
+  }}>
+    <span>4 (Rápido)</span>
+    <span>15 (Completo)</span>
+  </div>
+  
+  {/* 🆕 INFORMACIÓN PREDICTIVA */}
+  {totalPlayers >= 4 && (
+    <div style={{ 
+      background: 'rgba(99, 102, 241, 0.1)',
+      padding: '12px',
+      borderRadius: 'var(--border-radius)',
+      border: '1px solid var(--primary)',
+      fontSize: '13px'
+    }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+        <span style={{ fontWeight: '600' }}>Partidos por jugador:</span>
+        <span>~{calculateTournamentInfo(totalPlayers, newTournament.matchCount).avgMatchesPerPlayer}</span>
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+        <span style={{ fontWeight: '600' }}>Duración estimada:</span>
+        <span>{calculateTournamentInfo(totalPlayers, newTournament.matchCount).estimatedDuration}</span>
+      </div>
+    </div>
+  )}
+</div>
 
+{/* INFORMACIÓN DE JUGADORES */}
+<div style={{ 
+  padding: '14px',
+  background: 'rgba(99, 102, 241, 0.1)',
+  borderRadius: 'var(--border-radius)',
+  marginBottom: '20px',
+  border: '1px solid var(--primary)'
+}}>
+  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px', flexWrap: 'wrap', gap: '8px' }}>
+    <span style={{ color: 'var(--text-primary)', fontWeight: '600', fontSize: '14px' }}>
+      Resumen del Torneo:
+    </span>
+    <span style={{ 
+      color: (totalPlayers) >= 4 ? 'var(--secondary)' : 'var(--accent)',
+      fontWeight: '700',
+      fontSize: '16px'
+    }}>
+      {totalPlayers} jugadores • {newTournament.matchCount} partidos
+    </span>
+  </div>
+  {(totalPlayers) < 4 && (
+    <p style={{ color: 'var(--accent)', fontSize: '13px', marginTop: '8px', fontWeight: '600' }}>
+      ⚠️ Se necesitan al menos 4 jugadores
+    </p>
+  )}
+</div>
               <div style={{ display: 'flex', gap: '12px', flexDirection: 'column' }}>
                 <button 
                   type="submit" 
@@ -8045,133 +8095,148 @@ function TournamentDetail() {
               </div>
             </div>
 
-            {/* ✅ CORRECCIÓN: Botones con estilo consistente como en ClubManagement */}
-            <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
-              {tournamentData.status === 'active' && (
-                <>
-                  <button
-                    onClick={() => navigateWithTransition(`/tournament/${id}/play`)}
-                    style={{
-                      padding: '12px 20px',
-                      border: 'none',
-                      background: 'linear-gradient(135deg, var(--primary), var(--primary-dark))',
-                      color: 'white',
-                      borderRadius: 'var(--border-radius)',
-                      fontWeight: '600',
-                      cursor: 'pointer',
-                      transition: 'var(--transition)',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '8px',
-                      boxShadow: 'var(--shadow)',
-                      whiteSpace: 'nowrap'
-                    }}
-                    onMouseOver={(e) => {
-                      e.target.style.transform = 'translateY(-2px)';
-                      e.target.style.boxShadow = 'var(--shadow-lg)';
-                    }}
-                    onMouseOut={(e) => {
-                      e.target.style.transform = 'translateY(0)';
-                      e.target.style.boxShadow = 'var(--shadow)';
-                    }}
-                  >
-                    <Icon name="tournament" size={16} color="white" />
-                    Jugar
-                  </button>
-                  
-                  {isCreator && (
-                    <button
-                      onClick={handleCompleteTournament}
-                      disabled={isLoading}
-                      style={{
-                        padding: '12px 20px',
-                        border: 'none',
-                        background: 'linear-gradient(135deg, var(--secondary), var(--secondary-dark))',
-                        color: 'white',
-                        borderRadius: 'var(--border-radius)',
-                        fontWeight: '600',
-                        cursor: isLoading ? 'not-allowed' : 'pointer',
-                        transition: 'var(--transition)',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '8px',
-                        boxShadow: 'var(--shadow)',
-                        whiteSpace: 'nowrap',
-                        opacity: isLoading ? 0.7 : 1
-                      }}
-                      onMouseOver={(e) => {
-                        if (!isLoading) {
-                          e.target.style.transform = 'translateY(-2px)';
-                          e.target.style.boxShadow = 'var(--shadow-lg)';
-                        }
-                      }}
-                      onMouseOut={(e) => {
-                        if (!isLoading) {
-                          e.target.style.transform = 'translateY(0)';
-                          e.target.style.boxShadow = 'var(--shadow)';
-                        }
-                      }}
-                    >
-                      {isLoading ? (
-                        <>
-                          <div style={{
-                            width: '16px',
-                            height: '16px',
-                            border: '2px solid transparent',
-                            borderTop: '2px solid white',
-                            borderRadius: '50%',
-                            animation: 'spin 1s linear infinite'
-                          }}></div>
-                          Procesando...
-                        </>
-                      ) : (
-                        <>
-                          <Icon name="check" size={16} color="white" />
-                          Completar
-                        </>
-                      )}
-                    </button>
-                  )}
-                </>
-              )}
-              
-              {isCreator && (
-                <button
-                  onClick={handleDeleteTournament}
-                  disabled={isLoading}
-                  style={{
-                    padding: '12px 20px',
-                    border: '2px solid var(--error)',
-                    borderRadius: 'var(--border-radius)',
-                    background: 'transparent',
-                    color: 'var(--error)',
-                    cursor: isLoading ? 'not-allowed' : 'pointer',
-                    fontWeight: '600',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '8px',
-                    opacity: isLoading ? 0.7 : 1,
-                    transition: 'all 0.3s ease',
-                    whiteSpace: 'nowrap'
-                  }}
-                  onMouseOver={(e) => {
-                    if (!isLoading) {
-                      e.target.style.background = 'var(--error)';
-                      e.target.style.color = 'white';
-                    }
-                  }}
-                  onMouseOut={(e) => {
-                    if (!isLoading) {
-                      e.target.style.background = 'transparent';
-                      e.target.style.color = 'var(--error)';
-                    }
-                  }}
-                >
-                  <Icon name="delete" size={16} color="currentColor" />
-                  Eliminar
-                </button>
-              )}
-            </div>
+{/* ✅ CORRECCIÓN: Botones con estilo consistente y RESPONSIVE */}
+<div style={{ 
+  display: 'flex', 
+  gap: '12px', 
+  flexWrap: 'wrap',
+  alignItems: 'center',
+  justifyContent: 'flex-end'
+}}>
+  {tournamentData.status === 'active' && (
+    <>
+      <button
+        onClick={() => navigateWithTransition(`/tournament/${id}/play`)}
+        style={{
+          padding: '12px 20px',
+          border: 'none',
+          background: 'linear-gradient(135deg, var(--primary), var(--primary-dark))',
+          color: 'white',
+          borderRadius: 'var(--border-radius)',
+          fontWeight: '600',
+          cursor: 'pointer',
+          transition: 'var(--transition)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '8px',
+          boxShadow: 'var(--shadow)',
+          whiteSpace: 'nowrap',
+          flex: '1 1 auto',
+          minWidth: '120px',
+          justifyContent: 'center'
+        }}
+        onMouseOver={(e) => {
+          e.target.style.transform = 'translateY(-2px)';
+          e.target.style.boxShadow = 'var(--shadow-lg)';
+        }}
+        onMouseOut={(e) => {
+          e.target.style.transform = 'translateY(0)';
+          e.target.style.boxShadow = 'var(--shadow)';
+        }}
+      >
+        <Icon name="tournament" size={16} color="white" />
+        Jugar
+      </button>
+      
+      {isCreator && (
+        <button
+          onClick={handleCompleteTournament}
+          disabled={isLoading}
+          style={{
+            padding: '12px 20px',
+            border: 'none',
+            background: 'linear-gradient(135deg, var(--secondary), var(--secondary-dark))',
+            color: 'white',
+            borderRadius: 'var(--border-radius)',
+            fontWeight: '600',
+            cursor: isLoading ? 'not-allowed' : 'pointer',
+            transition: 'var(--transition)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            boxShadow: 'var(--shadow)',
+            whiteSpace: 'nowrap',
+            flex: '1 1 auto',
+            minWidth: '140px',
+            justifyContent: 'center',
+            opacity: isLoading ? 0.7 : 1
+          }}
+          onMouseOver={(e) => {
+            if (!isLoading) {
+              e.target.style.transform = 'translateY(-2px)';
+              e.target.style.boxShadow = 'var(--shadow-lg)';
+            }
+          }}
+          onMouseOut={(e) => {
+            if (!isLoading) {
+              e.target.style.transform = 'translateY(0)';
+              e.target.style.boxShadow = 'var(--shadow)';
+            }
+          }}
+        >
+          {isLoading ? (
+            <>
+              <div style={{
+                width: '16px',
+                height: '16px',
+                border: '2px solid transparent',
+                borderTop: '2px solid white',
+                borderRadius: '50%',
+                animation: 'spin 1s linear infinite'
+              }}></div>
+              Procesando...
+            </>
+          ) : (
+            <>
+              <Icon name="check" size={16} color="white" />
+              Completar
+            </>
+          )}
+        </button>
+      )}
+    </>
+  )}
+  
+  {isCreator && (
+    <button
+      onClick={handleDeleteTournament}
+      disabled={isLoading}
+      style={{
+        padding: '12px 20px',
+        border: '2px solid var(--error)',
+        borderRadius: 'var(--border-radius)',
+        background: 'transparent',
+        color: 'var(--error)',
+        cursor: isLoading ? 'not-allowed' : 'pointer',
+        fontWeight: '600',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '8px',
+        opacity: isLoading ? 0.7 : 1,
+        transition: 'all 0.3s ease',
+        whiteSpace: 'nowrap',
+        flex: '1 1 auto',
+        minWidth: '130px',
+        justifyContent: 'center'
+      }}
+      onMouseOver={(e) => {
+        if (!isLoading) {
+          e.target.style.background = 'var(--error)';
+          e.target.style.color = 'white';
+        }
+      }}
+      onMouseOut={(e) => {
+        if (!isLoading) {
+          e.target.style.background = 'transparent';
+          e.target.style.color = 'var(--error)';
+        }
+      }}
+    >
+      <Icon name="delete" size={16} color="currentColor" />
+      Eliminar
+    </button>
+  )}
+</div>
           </div>
         </div>
 
@@ -9428,7 +9493,7 @@ const getAvailablePlayersForCustomMatch = () => {
         ) : (
           <>
             <Icon name="magic" size={16} color="white" />
-            + Partido Inteligente
+            Inteligente
           </>
         )}
       </button>
@@ -9469,7 +9534,7 @@ const getAvailablePlayersForCustomMatch = () => {
         }}
       >
         <Icon name="users" size={16} color="currentColor" />
-        Partido Personalizado
+        Personalizado
       </button>
     </div>
 
