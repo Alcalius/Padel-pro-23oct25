@@ -1,0 +1,32 @@
+:root {
+  /* Tema oscuro (por defecto) */
+  --bg: #16161a;           /* fondo principal */
+  --bg-elevated: #18181a;  /* tarjetas, header, bottom nav */
+  --fg: #f9fafb;           /* texto principal */
+  --muted: #9ca3af;        /* texto secundario */
+  --accent: #3b82f6;       /* color de énfasis */
+  --border: #1f2933;
+}
+
+[data-theme="light"] {
+  /* Tema claro, fondo plano */
+  --bg: #ffffff;           /* fondo blanco */
+  --bg-elevated: #f9fafb;  /* tarjetas, header, bottom nav */
+  --fg: #111827;           /* texto principal */
+  --muted: #7d7f83;        /* texto secundario */
+  --accent: #2563eb;       /* azul */
+  --border: #d1d5db;       /* gris claro */
+}
+
+/* Estilos base del body */
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text",
+    "Segoe UI", sans-serif;
+  background-color: var(--bg);
+  color: var(--fg);
+  /* Transiciones suaves al cambiar tema */
+  transition:
+    background-color 0.25s ease,
+    color 0.25s ease;
+}
