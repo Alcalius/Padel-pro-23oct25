@@ -16,11 +16,14 @@ export default function RootLayout() {
 
   const [theme, setTheme] = useState("dark");
 
+  // ─────────────────────────────
   // Cargar tema inicial
+  // ─────────────────────────────
   useEffect(() => {
     try {
       const stored = window.localStorage.getItem("lop-theme");
-      const initial = stored === "light" || stored === "dark" ? stored : "dark";
+      const initial =
+        stored === "light" || stored === "dark" ? stored : "dark";
       setTheme(initial);
       document.documentElement.setAttribute("data-theme", initial);
     } catch {
@@ -42,7 +45,9 @@ export default function RootLayout() {
     setTheme((prev) => (prev === "dark" ? "light" : "dark"));
   };
 
+  // ─────────────────────────────
   // Reporte de bugs / notas
+  // ─────────────────────────────
   const handleBugReport = async () => {
     const message = window.prompt(
       "Describe tu reporte, nota u observación para el desarrollador:"
@@ -65,7 +70,9 @@ export default function RootLayout() {
     }
   };
 
-  // Proteger rutas: si no hay user y no estamos en /login, mandar a /login
+  // ─────────────────────────────
+  // Proteger rutas: si no hay user y no estamos en /login
+  // ─────────────────────────────
   useEffect(() => {
     if (!user && location.pathname !== "/login") {
       navigate("/login", { replace: true });
@@ -132,56 +139,36 @@ export default function RootLayout() {
               gap: "0.4rem",
             }}
           >
-            <div
+            {/* ⬇️ Antes había un fondo azul; lo quitamos y hacemos el icono un poco más grande */}
+            <img
+              src={AppIcon}
+              alt="League of Padel"
               style={{
-                width: 28,
-                height: 28,
-                borderRadius: "0.8rem",
-                overflow: "hidden",
-                background:
-                  "radial-gradient(circle at 30% 20%, rgba(59,130,246,1), rgba(15,23,42,1))",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
+                width: 32,
+                height: 32,
+                objectFit: "contain",
+                borderRadius: 0,
               }}
-            >
-              <img
-                src={AppIcon}
-                alt="League of Padel"
-                style={{
-                  width: "100%",
-                  height: "100%",
-                  objectFit: "cover",
-                }}
-              />
-            </div>
+            />
             <div>
               <div
                 style={{
-                  fontSize: "0.9rem",
+                  fontSize: "1.0rem",
                   fontWeight: 700,
                   lineHeight: 1.1,
                 }}
               >
                 League of Padel
               </div>
-              <div
-                style={{
-                  fontSize: "0.7rem",
-                  color: "var(--muted)",
-                }}
-              >
-                V 0.3.1
-              </div>
             </div>
           </div>
 
-          {/* Botones lado derecho: bug + tema */}
+          {/* Botones lado derecho: bug + V 0.3.2 + tema */}
           <div
             style={{
               display: "flex",
               alignItems: "center",
-              gap: "0.35rem",
+              gap: "0.4rem",
             }}
           >
             {/* Bug */}
@@ -203,6 +190,17 @@ export default function RootLayout() {
             >
               <Icon name="bug" size={18} color="var(--fg)" />
             </button>
+
+            {/* Versión movida aquí */}
+            <span
+              style={{
+                fontSize: "0.7rem",
+                color: "var(--muted)",
+                whiteSpace: "nowrap",
+              }}
+            >
+              V 0.3.2
+            </span>
 
             {/* Tema */}
             <button
@@ -261,7 +259,8 @@ export default function RootLayout() {
             maxWidth: 480,
             borderTop: "1px solid var(--border)",
             background: "var(--bg-elevated)",
-            padding: "0.25rem 0.4rem calc(0.25rem + env(safe-area-inset-bottom))",
+            // ⬇️ Un poco más de espacio abajo para no chocar con la barra del iPhone
+            padding: "0.3rem 0.4rem calc(0.6rem + env(safe-area-inset-bottom))",
             zIndex: 40,
           }}
         >
@@ -284,7 +283,7 @@ export default function RootLayout() {
                     flex: 1,
                     border: "none",
                     background: "transparent",
-                    padding: "0.2rem 0.2rem 0.35rem",
+                    padding: "0.2rem 0.2rem 0.4rem",
                     display: "flex",
                     flexDirection: "column",
                     alignItems: "center",
@@ -294,8 +293,9 @@ export default function RootLayout() {
                 >
                   <div
                     style={{
-                      width: 28,
-                      height: 28,
+                      // ⬇️ Iconos un poco más grandes
+                      width: 32,
+                      height: 38,
                       borderRadius: "0.8rem",
                       display: "flex",
                       alignItems: "center",
@@ -305,7 +305,7 @@ export default function RootLayout() {
                   >
                     <Icon
                       name={item.icon}
-                      size={18}
+                      size={20}
                       color={active ? "var(--accent)" : "var(--muted)"}
                     />
                   </div>

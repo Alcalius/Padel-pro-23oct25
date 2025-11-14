@@ -4,77 +4,122 @@
     <meta charset="utf-8" />
     <link rel="icon" href="%PUBLIC_URL%/favicon.ico" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="theme-color" content="#6366f1" />
-    <meta name="description" content="Aplicación para gestionar torneos y partidos de pádel" />
-    
-    <!-- PWA Manifest -->
-    <link rel="manifest" href="%PUBLIC_URL%/manifest.json" />
-    
-    <!-- Apple Touch Icon (para iOS) -->
-    <link rel="apple-touch-icon" href="%PUBLIC_URL%/logo192.png" />
-    <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-    <meta name="apple-mobile-web-app-title" content="Padel Pro" />
-    
-    <!-- Microsoft Tiles (para Windows) -->
-    <meta name="msapplication-TileColor" content="#6366f1" />
-    <meta name="msapplication-TileImage" content="%PUBLIC_URL%/logo192.png" />
-    
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    
-    <title>Padel Pro - Gestor de Torneos</title>
-    
+    <meta name="theme-color" content="#020617" />
+    <meta
+      name="description"
+      content="League of Padel · Torneos inteligentes, ranking de liga y estadísticas para tu club."
+    />
+    <title>League of Padel</title>
+
     <style>
-      /* Loading screen styles */
-      .app-loading {
+      :root {
+        color-scheme: dark;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text",
+          "Roboto", sans-serif;
+        background: radial-gradient(circle at 0% 0%, #0ea5e9 0, #020617 55%);
+        color: #e5e7eb;
+      }
+
+      #root {
+        min-height: 100vh;
+      }
+
+      .lop-splash {
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 2rem 1.5rem;
+      }
+
+      .lop-splash-card {
         display: flex;
         flex-direction: column;
         align-items: center;
-        justify-content: center;
-        height: 100vh;
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        color: white;
-        font-family: 'Inter', sans-serif;
+        gap: 1rem;
+        max-width: 340px;
+        width: 100%;
+        text-align: center;
       }
-      .loading-spinner {
-        width: 50px;
-        height: 50px;
-        border: 4px solid rgba(255,255,255,0.3);
-        border-top: 4px solid white;
-        border-radius: 50%;
-        animation: spin 1s linear infinite;
-        margin-bottom: 20px;
+
+      .lop-logo {
+        width: 104px;
+        height: 104px;
+        object-fit: contain;
+        filter: drop-shadow(0 12px 35px rgba(15, 23, 42, 0.9));
       }
-      @keyframes spin {
-        0% { transform: rotate(0deg); }
-        100% { transform: rotate(360deg); }
+
+      .lop-spinner {
+        width: 52px;
+        height: 52px;
+        border-radius: 999px;
+        border: 4px solid rgba(148, 163, 184, 0.35);
+        border-top-color: #38bdf8;
+        animation: lop-spin 0.9s linear infinite;
+      }
+
+      .lop-title {
+        margin: 0;
+        font-size: 1.3rem;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+      }
+
+      .lop-subtitle {
+        margin: 0;
+        font-size: 0.9rem;
+        color: rgba(226, 232, 240, 0.9);
+      }
+
+      .lop-version {
+        margin: 0.3rem 0 0;
+        font-size: 0.75rem;
+        color: rgba(148, 163, 184, 0.95);
+      }
+
+      @keyframes lop-spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      @media (max-width: 480px) {
+        .lop-logo {
+          width: 92px;
+          height: 92px;
+        }
+
+        .lop-title {
+          font-size: 1.15rem;
+        }
       }
     </style>
   </head>
   <body>
-    <noscript>Necesitas habilitar JavaScript para ejecutar esta aplicación.</noscript>
-    
-    <!-- Loading Screen -->
-    <div id="loading" class="app-loading">
-      <div class="loading-spinner"></div>
-      <h2>Padel Pro</h2>
-      <p>Cargando aplicación...</p>
+    <noscript>Necesitas habilitar JavaScript para usar League of Padel.</noscript>
+    <div id="root">
+      <!-- Splash que se ve antes de que React cargue -->
+      <div class="lop-splash">
+        <div class="lop-splash-card">
+          <img
+            src="%PUBLIC_URL%/AppIcon.png"
+            alt="League of Padel"
+            class="lop-logo"
+          />
+          <div class="lop-spinner"></div>
+          <h1 class="lop-title">League of Padel</h1>
+          <p class="lop-subtitle">Cargando aplicación…</p>
+          <p class="lop-version">V&nbsp;0.3.2</p>
+        </div>
+      </div>
     </div>
-    
-    <div id="root"></div>
-    
-    <script>
-      // Ocultar loading screen cuando la app cargue
-      window.addEventListener('load', function() {
-        setTimeout(function() {
-          const loading = document.getElementById('loading');
-          if (loading) {
-            loading.style.display = 'none';
-          }
-        }, 1000);
-      });
-    </script>
   </body>
 </html>
