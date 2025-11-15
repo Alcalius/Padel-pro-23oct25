@@ -1,14 +1,8 @@
 // src/pages/Profile.jsx
 import React, { useEffect, useRef, useState } from "react";
 import { useAuth } from "../context/AuthContext";
-import app, { db } from "../firebase/firebase";
+import { db } from "../firebase/firebase";
 import { doc, getDoc, updateDoc } from "firebase/firestore";
-import {
-  getStorage,
-  ref as storageRef,
-  uploadBytes,
-  getDownloadURL,
-} from "firebase/storage";
 import Icon from "../components/common/Icon";
 import { useNavigate } from "react-router-dom";
 
@@ -17,11 +11,10 @@ import bronceImg from "../assets/rangos/bronce.png";
 import plataImg from "../assets/rangos/plata.png";
 import oroImg from "../assets/rangos/oro.png";
 import platinoImg from "../assets/rangos/platino.png";
+import diamanteImg from "../assets/rangos/diamante.png";
 import leyendaImg from "../assets/rangos/leyenda.png";
 
-// ----------------------------------
-// Mapeo PL → rango / imagen (igual que en Home.jsx)
-// ----------------------------------
+// ---------------- RANGOS POR PL ----------------
 const RANK_TIERS = [
   { min: 0, max: 99, label: "Bronce III", short: "B3", image: bronceImg },
   { min: 100, max: 199, label: "Bronce II", short: "B2", image: bronceImg },
@@ -38,6 +31,10 @@ const RANK_TIERS = [
   { min: 900, max: 999, label: "Platino III", short: "P3", image: platinoImg },
   { min: 1000, max: 1099, label: "Platino II", short: "P2", image: platinoImg },
   { min: 1100, max: 1199, label: "Platino I", short: "P1", image: platinoImg },
+
+  { min: 1200, max: 1299, label: "Diamante III", short: "D3", image: diamanteImg },
+  { min: 1300, max: 1399, label: "Diamante II", short: "D2", image: diamanteImg },
+  { min: 1400, max: 1499, label: "Diamante I", short: "D1", image: diamanteImg },
 ];
 
 function getRankForPL(plValue) {
@@ -45,7 +42,7 @@ function getRankForPL(plValue) {
   const tier = RANK_TIERS.find((t) => pl >= t.min && pl <= t.max);
   if (tier) return tier;
 
-  if (pl >= 1200) {
+  if (pl >= 1500) {
     return {
       label: "Leyenda",
       short: "LEG",
@@ -87,11 +84,11 @@ export default function Profile() {
 
   const [errorMsg, setErrorMsg] = useState("");
   const [successMsg, setSuccessMsg] = useState("");
+
+  // input oculto para foto
   const fileInputRef = useRef(null);
 
-  // ----------------------------------
-  // Cargar datos del usuario
-  // ----------------------------------
+  // -------- CARGAR PERFIL --------
   useEffect(() => {
     const loadProfile = async () => {
       if (!user) {
@@ -119,10 +116,8 @@ export default function Profile() {
             profilePicture: data.profilePicture || data.photoURL || user.photoURL || "",
             leaguePoints:
               typeof data.leaguePoints === "number" ? data.leaguePoints : 0,
-            activeClubId: data.activeClubId || null,
           };
 
-          // Stats + recentMatches
           const s = data.stats || {};
           const totalMatches =
             typeof s.totalMatches === "number"
@@ -162,7 +157,6 @@ export default function Profile() {
             style: profileData.style,
           });
         } else {
-          // Fallback si no hay documento en Firestore
           const fallback = {
             id: user.uid,
             name:
@@ -174,7 +168,6 @@ export default function Profile() {
             style: "",
             profilePicture: user.photoURL || "",
             leaguePoints: 0,
-            activeClubId: null,
           };
 
           setProfile(fallback);
@@ -205,16 +198,11 @@ export default function Profile() {
     loadProfile();
   }, [user]);
 
-  // ----------------------------------
-  // Manejo de cambios de texto
-  // ----------------------------------
+  // -------- MANEJO DE CAMPOS DE TEXTO --------
   const handleChange = (field, value) => {
     setLocalEdit((prev) => ({ ...prev, [field]: value }));
   };
 
-  // ----------------------------------
-  // Guardar cambios de texto
-  // ----------------------------------
   const handleSaveProfile = async () => {
     if (!user || !profile) return;
 
@@ -249,9 +237,7 @@ export default function Profile() {
     }
   };
 
-  // ----------------------------------
-  // Subir / cambiar foto de perfil
-  // ----------------------------------
+  // -------- FOTO DE PERFIL (base64 en Firestore) --------
   const handlePhotoClick = () => {
     if (!editMode) return;
     if (fileInputRef.current) {
@@ -264,35 +250,49 @@ export default function Profile() {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    setSaving(true);
-    setErrorMsg("");
-    setSuccessMsg("");
-
-    try {
-      const storage = getStorage(app);
-      const ref = storageRef(storage, `profilePictures/${user.uid}`);
-      await uploadBytes(ref, file);
-      const url = await getDownloadURL(ref);
-
-      const userRef = doc(db, "users", user.uid);
-      await updateDoc(userRef, { profilePicture: url });
-
-      setProfile((prev) => ({
-        ...prev,
-        profilePicture: url,
-      }));
-      setSuccessMsg("Foto de perfil actualizada.");
-    } catch (err) {
-      console.error("Error subiendo foto de perfil:", err);
-      setErrorMsg("No se pudo actualizar la foto de perfil.");
-    } finally {
-      setSaving(false);
+    if (!file.type.startsWith("image/")) {
+      alert("Selecciona una imagen válida.");
+      e.target.value = "";
+      return;
     }
+
+    if (file.size > 5 * 1024 * 1024) {
+      alert("La imagen debe ser menor a 5MB.");
+      e.target.value = "";
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onloadend = async () => {
+      const dataUrl = reader.result; // base64
+
+      setSaving(true);
+      setErrorMsg("");
+      setSuccessMsg("");
+
+      try {
+        const userRef = doc(db, "users", user.uid);
+        await updateDoc(userRef, { profilePicture: dataUrl });
+
+        setProfile((prev) => ({
+          ...prev,
+          profilePicture: dataUrl,
+        }));
+
+        setSuccessMsg("Foto de perfil actualizada.");
+      } catch (err) {
+        console.error("Error subiendo foto de perfil:", err);
+        setErrorMsg("No se pudo actualizar la foto de perfil.");
+      } finally {
+        setSaving(false);
+        e.target.value = "";
+      }
+    };
+
+    reader.readAsDataURL(file);
   };
 
-  // ----------------------------------
-  // Cerrar sesión
-  // ----------------------------------
+  // -------- LOGOUT --------
   const handleLogout = async () => {
     try {
       await logout();
@@ -301,9 +301,7 @@ export default function Profile() {
     }
   };
 
-  // ----------------------------------
-  // Derivados
-  // ----------------------------------
+  // -------- RENDER --------
   if (!user) {
     return (
       <div
@@ -341,9 +339,9 @@ export default function Profile() {
   const rankInfo = getRankForPL(profile.leaguePoints || 0);
   const recentMatches = stats.recentMatches || [];
 
-  // ----------------------------------
-  // Render
-  // ----------------------------------
+  const pl = profile.leaguePoints || 0;
+  const progress = Math.max(0, Math.min(100, pl % 100));
+
   return (
     <div
       style={{
@@ -353,7 +351,7 @@ export default function Profile() {
         paddingBottom: "0.75rem",
       }}
     >
-      {/* INPUT HIDDEN PARA LA FOTO */}
+      {/* INPUT HIDDEN PARA FOTO */}
       <input
         ref={fileInputRef}
         type="file"
@@ -382,7 +380,7 @@ export default function Profile() {
         </div>
       )}
 
-      {/* CARD PRINCIPAL PERFIL */}
+      {/* CARD PRINCIPAL PERFIL (aquí también se edita) */}
       <section
         style={{
           position: "relative",
@@ -391,13 +389,24 @@ export default function Profile() {
           border: "1px solid var(--border)",
           background: "var(--bg-elevated)",
           display: "flex",
-          gap: "1rem",
+          flexDirection: "column",
+          gap: "0.9rem",
         }}
       >
         {/* Botón engrane */}
         <button
           type="button"
-          onClick={() => setEditMode((prev) => !prev)}
+          onClick={() => {
+            setEditMode((prev) => !prev);
+            setErrorMsg("");
+            setSuccessMsg("");
+            setLocalEdit({
+              name: profile.name,
+              email: profile.email,
+              handedness: profile.handedness,
+              style: profile.style,
+            });
+          }}
           style={{
             position: "absolute",
             top: 10,
@@ -415,164 +424,168 @@ export default function Profile() {
           />
         </button>
 
-        {/* Avatar */}
-        <button
-          type="button"
-          onClick={handlePhotoClick}
+        {/* Fila principal: avatar + datos + rango */}
+        <div
           style={{
-            border: "none",
-            background: "transparent",
-            padding: 0,
-            cursor: editMode ? "pointer" : "default",
+            display: "flex",
+            gap: "1rem",
+            alignItems: "center",
           }}
         >
-          <div
+          {/* Avatar */}
+          <button
+            type="button"
+            onClick={handlePhotoClick}
             style={{
-              width: 110,
-              height: 110,
-              borderRadius: "999px",
-              overflow: "hidden",
-              background:
-                "radial-gradient(circle at 30% 20%, rgba(59,130,246,0.9), rgba(15,23,42,1))",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              flexShrink: 0,
+              border: "none",
+              background: "transparent",
+              padding: 0,
+              cursor: editMode ? "pointer" : "default",
             }}
           >
-            {profile.profilePicture ? (
-              <img
-                src={profile.profilePicture}
-                alt={profile.name}
-                style={{
-                  width: "100%",
-                  height: "100%",
-                  objectFit: "cover",
-                }}
-              />
-            ) : (
-              <span
-                style={{
-                  fontSize: "2rem",
-                  fontWeight: 700,
-                  color: "#E5E7EB",
-                }}
-              >
-                {(profile.name || "J")[0].toUpperCase()}
-              </span>
-            )}
-          </div>
-          {editMode && (
-            <p
+            <div
               style={{
-                marginTop: "0.25rem",
-                fontSize: "0.75rem",
-                color: "var(--muted)",
-                textAlign: "center",
+                width: 110,
+                height: 110,
+                borderRadius: "999px",
+                overflow: "hidden",
+                background:
+                  "radial-gradient(circle at 30% 20%, rgba(59,130,246,0.9), rgba(15,23,42,1))",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                flexShrink: 0,
               }}
             >
-              Toca para cambiar foto
-            </p>
-          )}
-        </button>
-
-        {/* Info perfil */}
-        <div style={{ flex: 1, minWidth: 0 }}>
-          {/* Nombre */}
-          {!editMode ? (
-            <>
-              <h2
-                style={{
-                  margin: 0,
-                  fontSize: "1.15rem",
-                  fontWeight: 700,
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
-                }}
-              >
-                {profile.name}
-              </h2>
+              {profile.profilePicture ? (
+                <img
+                  src={profile.profilePicture}
+                  alt={profile.name}
+                  style={{
+                    width: "100%",
+                    height: "100%",
+                    objectFit: "cover",
+                  }}
+                />
+              ) : (
+                <span
+                  style={{
+                    fontSize: "2rem",
+                    fontWeight: 700,
+                    color: "#E5E7EB",
+                  }}
+                >
+                  {(profile.name || "J")[0].toUpperCase()}
+                </span>
+              )}
+            </div>
+            {editMode && (
               <p
                 style={{
-                  margin: "0.1rem 0",
-                  fontSize: "0.8rem",
+                  margin: "0.25rem 0 0",
+                  fontSize: "0.72rem",
                   color: "var(--muted)",
+                  textAlign: "center",
                 }}
               >
-                {profile.email}
+                Toca para cambiar foto
               </p>
-            </>
-          ) : (
-            <>
-              <label
-                style={{
-                  display: "block",
-                  marginBottom: "0.35rem",
-                  fontSize: "0.75rem",
-                  color: "var(--muted)",
-                }}
-              >
-                Nombre
-                <input
-                  type="text"
-                  value={localEdit.name}
-                  onChange={(e) =>
-                    handleChange("name", e.target.value)
-                  }
-                  style={{
-                    marginTop: "0.15rem",
-                    width: "100%",
-                    padding: "0.35rem 0.45rem",
-                    borderRadius: "0.5rem",
-                    border: "1px solid var(--border)",
-                    background: "var(--bg)",
-                    color: "var(--fg)",
-                    fontSize: "0.82rem",
-                  }}
-                />
-              </label>
+            )}
+          </button>
 
-              <label
-                style={{
-                  display: "block",
-                  marginBottom: "0.35rem",
-                  fontSize: "0.75rem",
-                  color: "var(--muted)",
-                }}
-              >
-                Correo
-                <input
-                  type="email"
-                  value={localEdit.email}
-                  onChange={(e) =>
-                    handleChange("email", e.target.value)
-                  }
+          {/* Info y rango */}
+          <div style={{ flex: 1, minWidth: 0 }}>
+            {/* Nombre / correo (texto o inputs) */}
+            {!editMode ? (
+              <>
+                <h2
                   style={{
-                    marginTop: "0.15rem",
-                    width: "100%",
-                    padding: "0.35rem 0.45rem",
-                    borderRadius: "0.5rem",
-                    border: "1px solid var(--border)",
-                    background: "var(--bg)",
-                    color: "var(--fg)",
-                    fontSize: "0.82rem",
+                    margin: 0,
+                    fontSize: "1.05rem",
+                    fontWeight: 700,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
                   }}
-                />
-              </label>
-            </>
-          )}
+                >
+                  {profile.name}
+                </h2>
+                <p
+                  style={{
+                    margin: "0.1rem 0",
+                    fontSize: "0.8rem",
+                    color: "var(--muted)",
+                  }}
+                >
+                  {profile.email}
+                </p>
+              </>
+            ) : (
+              <>
+                <label
+                  style={{
+                    display: "block",
+                    marginBottom: "0.35rem",
+                    fontSize: "0.75rem",
+                    color: "var(--muted)",
+                  }}
+                >
+                  Nombre
+                  <input
+                    type="text"
+                    value={localEdit.name}
+                    onChange={(e) => handleChange("name", e.target.value)}
+                    style={{
+                      marginTop: "0.15rem",
+                      width: "100%",
+                      padding: "0.35rem 0.45rem",
+                      borderRadius: "0.5rem",
+                      border: "1px solid var(--border)",
+                      background: "var(--bg)",
+                      color: "var(--fg)",
+                      fontSize: "0.82rem",
+                    }}
+                  />
+                </label>
 
-          {/* Rango y PL */}
-          <div
-            style={{
-              marginTop: "0.4rem",
-              display: "flex",
-              alignItems: "center",
-              gap: "0.6rem",
-            }}
-          >
-            {rankInfo.image && (
+                <label
+                  style={{
+                    display: "block",
+                    marginBottom: "0.15rem",
+                    fontSize: "0.75rem",
+                    color: "var(--muted)",
+                  }}
+                >
+                  Correo
+                  <input
+                    type="email"
+                    value={localEdit.email}
+                    onChange={(e) => handleChange("email", e.target.value)}
+                    style={{
+                      marginTop: "0.15rem",
+                      width: "100%",
+                      padding: "0.35rem 0.45rem",
+                      borderRadius: "0.5rem",
+                      border: "1px solid var(--border)",
+                      background: "var(--bg)",
+                      color: "var(--fg)",
+                      fontSize: "0.82rem",
+                    }}
+                  />
+                </label>
+              </>
+            )}
+
+            {/* Rango, PL y barra de progreso */}
+            <div
+              style={{
+                marginTop: "0.45rem",
+                display: "flex",
+                alignItems: "center",
+                gap: "0.6rem",
+              }}
+            >
+              {/* Imagen de rango SIN marco, solo el png */}
               <button
                 type="button"
                 onClick={() => navigate("/rankinginfo")}
@@ -587,75 +600,81 @@ export default function Profile() {
                   src={rankInfo.image}
                   alt={rankInfo.label}
                   style={{
-                    width: 72,
-                    height: 72,
+                    width: 86,
+                    height: 86,
                     objectFit: "contain",
                     display: "block",
                   }}
                 />
               </button>
-            )}
-            <div style={{ flex: 1 }}>
-              <p
-                style={{
-                  margin: 0,
-                  fontSize: "0.8rem",
-                  color: "var(--muted)",
-                }}
-              >
-                Rango actual
-              </p>
-              <p
-                style={{
-                  margin: "0.1rem 0",
-                  fontSize: "0.9rem",
-                  fontWeight: 600,
-                }}
-              >
-                {rankInfo.label} • {profile.leaguePoints || 0} PL
-              </p>
-              <div
-                style={{
-                  marginTop: "0.25rem",
-                  width: "100%",
-                  height: 7,
-                  borderRadius: 999,
-                  backgroundColor: "var(--bg)",
-                  overflow: "hidden",
-                }}
-              >
+
+              <div style={{ flex: 1 }}>
+                <p
+                  style={{
+                    margin: 0,
+                    fontSize: "0.8rem",
+                    color: "var(--muted)",
+                  }}
+                >
+                  Rango actual
+                </p>
+                <p
+                  style={{
+                    margin: "0.1rem 0",
+                    fontSize: "0.9rem",
+                    fontWeight: 600,
+                  }}
+                >
+                  {rankInfo.label} • {pl} PL
+                </p>
                 <div
                   style={{
-                    width: `${Math.max(
-                      0,
-                      Math.min(100, (profile.leaguePoints || 0) % 100)
-                    )}%`,
-                    height: "100%",
-                    background:
-                      "linear-gradient(90deg, rgba(59,130,246,1), rgba(56,189,248,1))",
+                    marginTop: "0.25rem",
+                    width: "100%",
+                    height: 7,
+                    borderRadius: 999,
+                    backgroundColor: "var(--bg)",
+                    overflow: "hidden",
                   }}
-                />
+                >
+                  <div
+                    style={{
+                      width: `${progress}%`,
+                      height: "100%",
+                      background:
+                        "linear-gradient(90deg, rgba(59,130,246,1), rgba(56,189,248,1))",
+                    }}
+                  />
+                </div>
+                <p
+                  style={{
+                    margin: "0.15rem 0 0",
+                    fontSize: "0.7rem",
+                    color: "var(--muted)",
+                  }}
+                >
+                  Toca el escudo para ver el sistema de ligas y rangos.
+                </p>
               </div>
-              <p
-                style={{
-                  margin: "0.15rem 0 0",
-                  fontSize: "0.7rem",
-                  color: "var(--muted)",
-                }}
-              >
-                Toca el escudo para ver el sistema de ranking.
-              </p>
             </div>
           </div>
+        </div>
 
-          {/* Botones de guardar / cancelar / logout */}
-          {editMode && (
+        {/* BOTONES DE GUARDAR / CANCELAR / LOGOUT DENTRO DE LA MISMA CARD */}
+        {editMode && (
+          <div
+            style={{
+              marginTop: "0.8rem",
+              display: "flex",
+              flexDirection: "column",
+              gap: "0.5rem",
+            }}
+          >
             <div
               style={{
-                marginTop: "0.8rem",
                 display: "flex",
-                flexWrap: "wrap",
                 gap: "0.5rem",
+                flexWrap: "wrap",
               }}
             >
               <button
@@ -706,31 +725,32 @@ export default function Profile() {
               >
                 Cancelar
               </button>
-              <button
-                type="button"
-                onClick={handleLogout}
-                style={{
-                  width: "100%",
-                  borderRadius: "999px",
-                  padding: "0.45rem 0.8rem",
-                  border: "1px solid rgba(248,113,113,0.6)",
-                  background: "rgba(127,29,29,0.05)",
-                  color: "rgb(248,113,113)",
-                  fontSize: "0.8rem",
-                  cursor: "pointer",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  gap: "0.3rem",
-                  marginTop: "0.2rem",
-                }}
-              >
-                <Icon name="logout" size={14} color="rgb(248,113,113)" />
-                Cerrar sesión
-              </button>
             </div>
-          )}
-        </div>
+
+            <button
+              type="button"
+              onClick={handleLogout}
+              style={{
+                width: "100%",
+                borderRadius: "999px",
+                padding: "0.45rem 0.8rem",
+                border: "1px solid rgba(248,113,113,0.6)",
+                background: "rgba(127,29,29,0.05)",
+                color: "rgb(248,113,113)",
+                fontSize: "0.8rem",
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: "0.3rem",
+                marginTop: "0.1rem",
+              }}
+            >
+              <Icon name="logout" size={14} color="rgb(248,113,113)" />
+              Cerrar sesión
+            </button>
+          </div>
+        )}
       </section>
 
       {/* RESUMEN ESTADÍSTICAS */}
@@ -989,9 +1009,7 @@ export default function Profile() {
   );
 }
 
-// ----------------------------------
-// Componentes auxiliares
-// ----------------------------------
+// ------- COMPONENTES AUXILIARES -------
 
 function ProfileTag({ icon, label, value }) {
   return (

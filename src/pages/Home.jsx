@@ -406,8 +406,8 @@ export default function Home() {
           {/* Avatar */}
           <div
             style={{
-              width: 95,
-              height: 95,
+              width: 110,
+              height: 110,
               borderRadius: "999px",
               overflow: "hidden",
               border: "1px solid var(--border)",
