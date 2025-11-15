@@ -3,7 +3,10 @@
   <head>
     <meta charset="utf-8" />
     <link rel="icon" href="%PUBLIC_URL%/favicon.ico" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"
+    />
     <meta name="theme-color" content="#020617" />
     <meta
       name="description"
@@ -99,6 +102,28 @@
 
         .lop-title {
           font-size: 1.15rem;
+        }
+      }
+
+      /* Bloquear uso en landscape en móviles: overlay que pide girar el dispositivo */
+      @media screen and (orientation: landscape) and (max-width: 900px) {
+        body {
+          overflow: hidden;
+        }
+
+        #root::before {
+          content: "Gira tu dispositivo para usar League of Padel";
+          position: fixed;
+          inset: 0;
+          background: #020617;
+          color: #e5e7eb;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 1.5rem;
+          text-align: center;
+          font-size: 0.95rem;
+          z-index: 9999;
         }
       }
     </style>
