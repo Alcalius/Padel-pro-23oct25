@@ -163,7 +163,7 @@ export default function RootLayout() {
             </div>
           </div>
 
-          {/* Botones lado derecho: bug + V 0.3.2 + tema */}
+          {/* Botones lado derecho: bug + V #.#.# + tema */}
           <div
             style={{
               display: "flex",
@@ -199,7 +199,7 @@ export default function RootLayout() {
                 whiteSpace: "nowrap",
               }}
             >
-              V 0.3.2
+              V 0.3.3
             </span>
 
             {/* Tema */}

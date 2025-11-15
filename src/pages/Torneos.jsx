@@ -711,8 +711,8 @@ export default function Torneos() {
 
               <input
                 type="range"
-                min={1}
-                max={40}
+                min={6}
+                max={18}
                 value={form.matchCount}
                 onChange={(e) =>
                   handleFormChange("matchCount", Number(e.target.value) || 1)

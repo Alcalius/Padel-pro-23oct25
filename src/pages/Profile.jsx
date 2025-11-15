@@ -1,4 +1,3 @@
-// src/pages/Profile.jsx
 import React, { useEffect, useRef, useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import { db } from "../firebase/firebase";
@@ -6,7 +5,7 @@ import { doc, getDoc, updateDoc } from "firebase/firestore";
 import Icon from "../components/common/Icon";
 import { useNavigate } from "react-router-dom";
 
-// Imágenes de rangos (ajusta la ruta si tu carpeta se llama distinto)
+// Imágenes de rangos
 import bronceImg from "../assets/rangos/bronce.png";
 import plataImg from "../assets/rangos/plata.png";
 import oroImg from "../assets/rangos/oro.png";
@@ -14,7 +13,7 @@ import platinoImg from "../assets/rangos/platino.png";
 import diamanteImg from "../assets/rangos/diamante.png";
 import leyendaImg from "../assets/rangos/leyenda.png";
 
-// ---------------- RANGOS POR PL ----------------
+// ---------------- RANGOS POR PL (fallback) ----------------
 const RANK_TIERS = [
   { min: 0, max: 99, label: "Bronce III", short: "B3", image: bronceImg },
   { min: 100, max: 199, label: "Bronce II", short: "B2", image: bronceImg },
@@ -57,6 +56,53 @@ function getRankForPL(plValue) {
   };
 }
 
+// ---------------- RANGOS POR NOMBRE (rango real) ----------------
+const RANK_META_BY_NAME = {
+  "Bronce III": { short: "B3", image: bronceImg },
+  "Bronce II": { short: "B2", image: bronceImg },
+  "Bronce I": { short: "B1", image: bronceImg },
+
+  "Plata III": { short: "S3", image: plataImg },
+  "Plata II": { short: "S2", image: plataImg },
+  "Plata I": { short: "S1", image: plataImg },
+
+  "Oro III": { short: "G3", image: oroImg },
+  "Oro II": { short: "G2", image: oroImg },
+  "Oro I": { short: "G1", image: oroImg },
+
+  "Platino III": { short: "P3", image: platinoImg },
+  "Platino II": { short: "P2", image: platinoImg },
+  "Platino I": { short: "P1", image: platinoImg },
+
+  "Diamante III": { short: "D3", image: diamanteImg },
+  "Diamante II": { short: "D2", image: diamanteImg },
+  "Diamante I": { short: "D1", image: diamanteImg },
+
+  Leyenda: { short: "LEG", image: leyendaImg },
+  "Sin rango": { short: "UNR", image: bronceImg },
+};
+
+// Usa primero el rank guardado en Firestore, y si no existe, cae al cálculo por PL
+function getRankInfoFromData(rankName, leaguePoints) {
+  const pl = typeof leaguePoints === "number" ? leaguePoints : 0;
+
+  if (typeof rankName === "string" && RANK_META_BY_NAME[rankName]) {
+    const meta = RANK_META_BY_NAME[rankName];
+    return {
+      label: rankName,
+      short: meta.short,
+      image: meta.image,
+    };
+  }
+
+  const tier = getRankForPL(pl);
+  return {
+    label: tier.label,
+    short: tier.short,
+    image: tier.image,
+  };
+}
+
 export default function Profile() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
@@ -85,7 +131,6 @@ export default function Profile() {
   const [errorMsg, setErrorMsg] = useState("");
   const [successMsg, setSuccessMsg] = useState("");
 
-  // input oculto para foto
   const fileInputRef = useRef(null);
 
   // -------- CARGAR PERFIL --------
@@ -113,9 +158,12 @@ export default function Profile() {
             email: data.email || user.email || "",
             handedness: data.handedness || "",
             style: data.style || "",
-            profilePicture: data.profilePicture || data.photoURL || user.photoURL || "",
+            profilePicture:
+              data.profilePicture || data.photoURL || user.photoURL || "",
             leaguePoints:
               typeof data.leaguePoints === "number" ? data.leaguePoints : 0,
+            // 👇 rango real guardado en Firestore
+            rank: data.rank || "Bronce III",
           };
 
           const s = data.stats || {};
@@ -168,6 +216,7 @@ export default function Profile() {
             style: "",
             profilePicture: user.photoURL || "",
             leaguePoints: 0,
+            rank: "Bronce III",
           };
 
           setProfile(fallback);
@@ -237,7 +286,7 @@ export default function Profile() {
     }
   };
 
-  // -------- FOTO DE PERFIL (base64 en Firestore) --------
+  // -------- FOTO DE PERFIL (con compresión) --------
   const handlePhotoClick = () => {
     if (!editMode) return;
     if (fileInputRef.current) {
@@ -256,37 +305,73 @@ export default function Profile() {
       return;
     }
 
-    if (file.size > 5 * 1024 * 1024) {
-      alert("La imagen debe ser menor a 5MB.");
+    // Permitimos fotos grandes, pero las comprimimos
+    if (file.size > 15 * 1024 * 1024) {
+      alert("La imagen es demasiado grande (más de 15MB). Elige otra por favor.");
       e.target.value = "";
       return;
     }
 
     const reader = new FileReader();
-    reader.onloadend = async () => {
-      const dataUrl = reader.result; // base64
 
-      setSaving(true);
-      setErrorMsg("");
-      setSuccessMsg("");
+    reader.onloadend = () => {
+      const baseDataUrl = reader.result;
+      const img = new Image();
 
-      try {
-        const userRef = doc(db, "users", user.uid);
-        await updateDoc(userRef, { profilePicture: dataUrl });
+      img.onload = async () => {
+        try {
+          const maxSize = 900; // ancho/alto máximo para la foto de perfil
+          let { width, height } = img;
 
-        setProfile((prev) => ({
-          ...prev,
-          profilePicture: dataUrl,
-        }));
+          if (width > maxSize || height > maxSize) {
+            const scale = Math.min(maxSize / width, maxSize / height);
+            width = Math.round(width * scale);
+            height = Math.round(height * scale);
+          }
 
-        setSuccessMsg("Foto de perfil actualizada.");
-      } catch (err) {
-        console.error("Error subiendo foto de perfil:", err);
-        setErrorMsg("No se pudo actualizar la foto de perfil.");
-      } finally {
-        setSaving(false);
+          const canvas = document.createElement("canvas");
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext("2d");
+
+          if (!ctx) {
+            throw new Error("No se pudo obtener el contexto del canvas.");
+          }
+
+          ctx.drawImage(img, 0, 0, width, height);
+
+          // Comprimir a JPEG de calidad 0.8 aprox
+          const compressedDataUrl = canvas.toDataURL("image/jpeg", 0.8);
+
+          setSaving(true);
+          setErrorMsg("");
+          setSuccessMsg("");
+
+          const userRef = doc(db, "users", user.uid);
+          await updateDoc(userRef, { profilePicture: compressedDataUrl });
+
+          setProfile((prev) => ({
+            ...prev,
+            profilePicture: compressedDataUrl,
+          }));
+
+          setSuccessMsg("Foto de perfil actualizada.");
+        } catch (err) {
+          console.error("Error subiendo foto de perfil:", err);
+          setErrorMsg("No se pudo actualizar la foto de perfil.");
+        } finally {
+          setSaving(false);
+          e.target.value = "";
+        }
+      };
+
+      img.onerror = () => {
+        console.error("No se pudo cargar la imagen para comprimir.");
+        setErrorMsg("No se pudo procesar la imagen seleccionada.");
         e.target.value = "";
-      }
+      };
+
+      img.src = baseDataUrl;
     };
 
     reader.readAsDataURL(file);
@@ -336,10 +421,10 @@ export default function Profile() {
     );
   }
 
-  const rankInfo = getRankForPL(profile.leaguePoints || 0);
-  const recentMatches = stats.recentMatches || [];
-
   const pl = profile.leaguePoints || 0;
+  // 👇 ahora usamos el rango real de Firestore
+  const rankInfo = getRankInfoFromData(profile.rank, pl);
+  const recentMatches = stats.recentMatches || [];
   const progress = Math.max(0, Math.min(100, pl % 100));
 
   return (
@@ -380,7 +465,7 @@ export default function Profile() {
         </div>
       )}
 
-      {/* CARD PRINCIPAL PERFIL (aquí también se edita) */}
+      {/* CARD PRINCIPAL PERFIL */}
       <section
         style={{
           position: "relative",
@@ -393,7 +478,7 @@ export default function Profile() {
           gap: "0.9rem",
         }}
       >
-        {/* Botón engrane */}
+        {/* Engrane */}
         <button
           type="button"
           onClick={() => {
@@ -495,7 +580,6 @@ export default function Profile() {
 
           {/* Info y rango */}
           <div style={{ flex: 1, minWidth: 0 }}>
-            {/* Nombre / correo (texto o inputs) */}
             {!editMode ? (
               <>
                 <h2
@@ -585,7 +669,7 @@ export default function Profile() {
                 gap: "0.6rem",
               }}
             >
-              {/* Imagen de rango SIN marco, solo el png */}
+              {/* Imagen de rango SIN marco extra */}
               <button
                 type="button"
                 onClick={() => navigate("/rankinginfo")}
@@ -660,7 +744,7 @@ export default function Profile() {
           </div>
         </div>
 
-        {/* BOTONES DE GUARDAR / CANCELAR / LOGOUT DENTRO DE LA MISMA CARD */}
+        {/* BOTONES GUARDAR / CANCELAR / LOGOUT */}
         {editMode && (
           <div
             style={{
@@ -774,17 +858,10 @@ export default function Profile() {
             gap: "0.6rem",
           }}
         >
-          <MiniStatCard
-            label="Partidos jugados"
-            value={stats.totalMatches}
-          />
+          <MiniStatCard label="Partidos jugados" value={stats.totalMatches} />
           <MiniStatCard label="Victorias" value={stats.wins} />
           <MiniStatCard label="Derrotas" value={stats.losses} />
-          <MiniStatCard
-            label="Winrate"
-            value={stats.winRate}
-            suffix="%"
-          />
+          <MiniStatCard label="Winrate" value={stats.winRate} suffix="%" />
           <MiniStatCard
             label="Torneos jugados"
             value={stats.tournamentsPlayed}
@@ -843,9 +920,7 @@ export default function Profile() {
                 <Icon
                   name="star"
                   size={16}
-                  color={
-                    ach.unlocked ? "var(--accent)" : "var(--muted)"
-                  }
+                  color={ach.unlocked ? "var(--accent)" : "var(--muted)"}
                 />
               </div>
               <div style={{ flex: 1, minWidth: 0 }}>
@@ -969,7 +1044,9 @@ export default function Profile() {
                         color: "var(--muted)",
                       }}
                     >
-                      {score ? `Marcador: ${score}` : "Marcador no disponible"}
+                      {score
+                        ? `Marcador: ${score}`
+                        : "Marcador no disponible"}
                       {dateStr ? ` · ${dateStr}` : ""}
                     </p>
                   </div>

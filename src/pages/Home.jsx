@@ -1,4 +1,3 @@
-// src/pages/Home.jsx
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
@@ -20,7 +19,9 @@ import oroImg from "../assets/rangos/oro.png";
 import platinoImg from "../assets/rangos/platino.png";
 import leyendaImg from "../assets/rangos/leyenda.png";
 
-// Mapeo PL → rango / imagen
+// --------------------------
+// RANGOS POR PL (LEGACY / FALLBACK)
+// --------------------------
 const RANK_TIERS = [
   { min: 0, max: 99, label: "Bronce III", short: "B3", image: bronceImg },
   { min: 100, max: 199, label: "Bronce II", short: "B2", image: bronceImg },
@@ -59,6 +60,103 @@ function getRankForPL(plValue) {
   };
 }
 
+// --------------------------
+// RANGOS POR NOMBRE (LO NUEVO)
+// --------------------------
+const RANK_META_BY_NAME = {
+  "Bronce III": { short: "B3", image: bronceImg },
+  "Bronce II": { short: "B2", image: bronceImg },
+  "Bronce I": { short: "B1", image: bronceImg },
+
+  "Plata III": { short: "S3", image: plataImg },
+  "Plata II": { short: "S2", image: plataImg },
+  "Plata I": { short: "S1", image: plataImg },
+
+  "Oro III": { short: "G3", image: oroImg },
+  "Oro II": { short: "G2", image: oroImg },
+  "Oro I": { short: "G1", image: oroImg },
+
+  "Platino III": { short: "P3", image: platinoImg },
+  "Platino II": { short: "P2", image: platinoImg },
+  "Platino I": { short: "P1", image: platinoImg },
+
+  Leyenda: { short: "LEG", image: leyendaImg },
+
+  "Sin rango": { short: "UNR", image: bronceImg },
+};
+
+// 👉 Orden de fuerza de cada rango (para ordenar el ranking)
+const RANK_ORDER = {
+  "Sin rango": 0,
+
+  "Bronce III": 1,
+  "Bronce II": 2,
+  "Bronce I": 3,
+
+  "Plata III": 4,
+  "Plata II": 5,
+  "Plata I": 6,
+
+  "Oro III": 7,
+  "Oro II": 8,
+  "Oro I": 9,
+
+  "Platino III": 10,
+  "Platino II": 11,
+  "Platino I": 12,
+
+  Leyenda: 13,
+};
+
+function getRankOrder(label) {
+  return typeof label === "string" && RANK_ORDER[label] != null
+    ? RANK_ORDER[label]
+    : 0;
+}
+
+function getRankInfoFromData(rankName, leaguePoints) {
+  const pl = typeof leaguePoints === "number" ? leaguePoints : 0;
+
+  // 1) Preferimos SIEMPRE el rank que venga de Firestore
+  if (typeof rankName === "string" && RANK_META_BY_NAME[rankName]) {
+    const meta = RANK_META_BY_NAME[rankName];
+    return {
+      label: rankName,
+      short: meta.short,
+      image: meta.image,
+    };
+  }
+
+  // 2) Si no hay rank guardado, caemos al mapeo legacy por PL
+  const tier = getRankForPL(pl);
+  return {
+    label: tier.label,
+    short: tier.short,
+    image: tier.image,
+  };
+}
+
+// --------------------------
+// Helper para ordenar partidos recientes
+// --------------------------
+function getMatchDateMillis(match) {
+  if (!match || !match.date) return 0;
+  const d = match.date;
+
+  if (typeof d === "string") {
+    const t = Date.parse(d);
+    return Number.isNaN(t) ? 0 : t;
+  }
+  // Firestore Timestamp
+  if (typeof d.toMillis === "function") {
+    return d.toMillis();
+  }
+  if (typeof d.seconds === "number") {
+    return d.seconds * 1000;
+  }
+  return 0;
+}
+
 export default function Home() {
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -69,295 +167,301 @@ export default function Home() {
   const [stats, setStats] = useState({
     totalMatches: 0,
     totalWins: 0,
-    totalLosses: 0,
     winRate: 0,
     tournamentsPlayed: 0,
   });
   const [userRecentMatches, setUserRecentMatches] = useState([]);
 
-  const [activeClub, setActiveClub] = useState(null);
   const [clubMembers, setClubMembers] = useState([]);
-  const [tournaments, setTournaments] = useState([]);
-
-  const [showRankingModal, setShowRankingModal] = useState(false);
   const [selectedMember, setSelectedMember] = useState(null);
-
   const [memberDetail, setMemberDetail] = useState(null);
   const [memberDetailLoading, setMemberDetailLoading] = useState(false);
 
-  // -----------------------------
-  // Cargar usuario + club activo
-  // -----------------------------
+  const [activeTournaments, setActiveTournaments] = useState([]);
+  const [completedTournaments, setCompletedTournaments] = useState([]);
+
+  // NUEVO: estado para modales
+  const [showRankingModal, setShowRankingModal] = useState(false);
+  const [showMemberDetailModal, setShowMemberDetailModal] = useState(false);
+
+  // --------------------------
+  // Cargar datos de usuario
+  // --------------------------
   useEffect(() => {
-    const loadUser = async () => {
-      if (!user) {
-        setLoading(false);
+    if (!user?.uid) return;
+
+    const unsubUser = onSnapshot(doc(db, "users", user.uid), (snap) => {
+      const data = snap.data();
+      if (!data) return;
+
+      setUserData({
+        id: snap.id,
+        displayName: data.displayName || data.name || "",
+        email: data.email || user.email,
+        profilePicture: data.profilePicture || "",
+        leaguePoints:
+          typeof data.leaguePoints === "number" ? data.leaguePoints : 0,
+        rank: data.rank || "Bronce III",
+        activeClubId: data.activeClubId || null,
+      });
+
+      const statsData = data.stats || {};
+      setStats({
+        totalMatches: statsData.totalMatches || 0,
+        totalWins: statsData.wins || 0,
+        winRate: statsData.winRate || 0,
+        tournamentsPlayed: statsData.tournamentsPlayed || 0,
+      });
+
+      const recent =
+        Array.isArray(statsData.recentMatches) && statsData.recentMatches.length
+          ? statsData.recentMatches
+          : Array.isArray(data.recentMatches)
+          ? data.recentMatches
+          : [];
+
+      const sortedRecent = Array.isArray(recent)
+        ? [...recent].sort(
+            (a, b) => getMatchDateMillis(b) - getMatchDateMillis(a)
+          )
+        : [];
+
+      setUserRecentMatches(sortedRecent);
+      setLoading(false);
+    });
+
+    return () => {
+      unsubUser();
+    };
+  }, [user]);
+
+  // --------------------------
+  // Torneos del usuario
+  // --------------------------
+  useEffect(() => {
+    if (!user?.uid) return;
+
+    const q = query(
+      collection(db, "tournaments"),
+      where("participantsIds", "array-contains", user.uid)
+    );
+
+    const unsub = onSnapshot(q, (snap) => {
+      const active = [];
+      const completed = [];
+
+      snap.forEach((docSnap) => {
+        const data = docSnap.data();
+        const base = {
+          id: docSnap.id,
+          name: data.name || "Liga / Torneo sin nombre",
+          status: data.status || "pending",
+          clubId: data.clubId || null,
+          courtCount: data.courtCount || 1,
+          matchCount: data.matchCount || 0,
+          createdAt: data.createdAt || null,
+        };
+
+        if (base.status === "completed") {
+          completed.push(base);
+        } else {
+          active.push(base);
+        }
+      });
+
+      active.sort((a, b) => getMatchDateMillis(b) - getMatchDateMillis(a));
+      completed.sort((a, b) => getMatchDateMillis(b) - getMatchDateMillis(a));
+
+      setActiveTournaments(active);
+      setCompletedTournaments(completed);
+    });
+
+    return () => unsub();
+  }, [user]);
+
+  // --------------------------
+  // Miembros del club activo
+  // --------------------------
+  useEffect(() => {
+    if (!userData?.activeClubId) {
+      setClubMembers([]);
+      setSelectedMember(null);
+      setMemberDetail(null);
+      return;
+    }
+
+    const clubId = userData.activeClubId;
+    const clubRef = doc(db, "clubs", clubId);
+
+    const unsubClub = onSnapshot(clubRef, async (clubSnap) => {
+      const clubData = clubSnap.data();
+      if (!clubData || !Array.isArray(clubData.members)) {
+        setClubMembers([]);
+        setSelectedMember(null);
+        setMemberDetail(null);
         return;
       }
 
-      try {
-        const userRef = doc(db, "users", user.uid);
-        const snap = await getDoc(userRef);
+      const membersList = clubData.members;
+      const membersData = [];
 
+      for (const m of membersList) {
+        const memberUid = typeof m === "string" ? m : m?.uid;
+        if (!memberUid) continue;
+
+        const userDoc = await getDoc(doc(db, "users", memberUid));
+        if (!userDoc.exists()) continue;
+
+        const data = userDoc.data();
+        const lp =
+          typeof data.leaguePoints === "number" ? data.leaguePoints : 0;
+
+        const rankInfo = getRankInfoFromData(data.rank, lp);
+
+        membersData.push({
+          id: userDoc.id,
+          name: data.displayName || data.name || data.email || "Jugador",
+          email: data.email || "",
+          profilePicture: data.profilePicture || "",
+          leaguePoints: lp,
+          rankLabel: rankInfo.label,
+          rankShort: rankInfo.short,
+          rankImage: rankInfo.image,
+        });
+      }
+
+      // 👉 Ordenar primero por rango (RANK_ORDER) y luego por PL
+      membersData.sort((a, b) => {
+        const ra = getRankOrder(a.rankLabel);
+        const rb = getRankOrder(b.rankLabel);
+        if (rb !== ra) return rb - ra;
+        return b.leaguePoints - a.leaguePoints;
+      });
+
+      setClubMembers(membersData);
+      setSelectedMember((prev) => {
+        if (!prev) return membersData[0] || null;
+        const stillExists = membersData.find((m) => m.id === prev.id);
+        return stillExists || membersData[0] || null;
+      });
+    });
+
+    return () => unsubClub();
+  }, [userData?.activeClubId]);
+
+  // Detalle de jugador del ranking del club
+  useEffect(() => {
+    async function loadMemberDetail() {
+      if (!selectedMember) {
+        setMemberDetail(null);
+        return;
+      }
+
+      setMemberDetailLoading(true);
+      try {
+        const userRef = doc(db, "users", selectedMember.id);
+        const snap = await getDoc(userRef);
         if (!snap.exists()) {
-          setLoading(false);
+          setMemberDetail(null);
           return;
         }
 
         const data = snap.data();
-
         const statsData = data.stats || {};
-        const totalMatches =
-          typeof statsData.totalMatches === "number"
-            ? statsData.totalMatches
-            : data.totalMatches || 0;
-        const totalWins =
-          typeof statsData.wins === "number" ? statsData.wins : data.wins || 0;
-        const totalLosses =
-          typeof statsData.losses === "number"
-            ? statsData.losses
-            : data.losses || 0;
-        const tournamentsPlayed =
-          typeof statsData.tournamentsPlayed === "number"
-            ? statsData.tournamentsPlayed
-            : data.tournamentsPlayed || 0;
+        const lp =
+          typeof data.leaguePoints === "number" ? data.leaguePoints : 0;
 
-        const winRate =
-          totalMatches > 0 ? (totalWins / totalMatches) * 100 : 0;
+        const rankInfo = getRankInfoFromData(data.rank, lp);
 
-        // Partidos recientes del usuario (para Actividad reciente)
-        let recent = [];
-        if (Array.isArray(statsData.recentMatches)) {
-          recent = statsData.recentMatches;
-        } else if (Array.isArray(data.recentMatches)) {
-          recent = data.recentMatches;
-        }
+        const recent =
+          Array.isArray(statsData.recentMatches) && statsData.recentMatches.length
+            ? statsData.recentMatches
+            : Array.isArray(data.recentMatches)
+            ? data.recentMatches
+            : [];
 
-        setUserData({
-          id: user.uid,
-          name:
-            data.name ||
-            data.displayName ||
-            (data.email ? data.email.split("@")[0] : "Jugador"),
-          email: data.email || user.email || "",
-          profilePicture: data.profilePicture || data.photoURL || "",
-          leaguePoints:
-            typeof data.leaguePoints === "number" ? data.leaguePoints : 0,
-          activeClubId: data.activeClubId || null,
+        const sortedRecent = Array.isArray(recent)
+          ? [...recent].sort(
+              (a, b) => getMatchDateMillis(b) - getMatchDateMillis(a)
+            )
+          : [];
+
+        setMemberDetail({
+          id: snap.id,
+          name: data.displayName || data.name || data.email || "Jugador",
+          email: data.email || "",
+          profilePicture: data.profilePicture || "",
+          rankLabel: rankInfo.label,
+          rankShort: rankInfo.short,
+          rankImage: rankInfo.image,
+          leaguePoints: lp,
+          stats: {
+            totalMatches: statsData.totalMatches || 0,
+            wins: statsData.wins || 0,
+            losses: statsData.losses || 0,
+            tournamentsPlayed: statsData.tournamentsPlayed || 0,
+            winRate: statsData.winRate || 0,
+          },
+          recentMatches: sortedRecent,
         });
-
-        setStats({
-          totalMatches,
-          totalWins,
-          totalLosses,
-          tournamentsPlayed,
-          winRate,
-        });
-
-        setUserRecentMatches(recent || []);
-
-        // Club activo
-        if (data.activeClubId) {
-          const clubRef = doc(db, "clubs", data.activeClubId);
-          const clubSnap = await getDoc(clubRef);
-          if (clubSnap.exists()) {
-            const cData = clubSnap.data();
-            setActiveClub({
-              id: clubSnap.id,
-              name: cData.name || "Club sin nombre",
-              members: Array.isArray(cData.members) ? cData.members : [],
-            });
-          } else {
-            setActiveClub(null);
-          }
-        } else {
-          setActiveClub(null);
-        }
       } catch (err) {
-        console.error("Error cargando usuario en Home:", err);
+        console.error("Error cargando detalle de jugador:", err);
       } finally {
-        setLoading(false);
+        setMemberDetailLoading(false);
       }
-    };
-
-    loadUser();
-  }, [user]);
-
-  // -----------------------------
-  // Cargar miembros del club (ranking)
-  // -----------------------------
-  useEffect(() => {
-    const loadMembers = async () => {
-      if (!activeClub?.members || activeClub.members.length === 0) {
-        setClubMembers([]);
-        setSelectedMember(null);
-        return;
-      }
-
-      const membersData = [];
-
-      for (const memberId of activeClub.members) {
-        try {
-          const memberRef = doc(db, "users", memberId);
-          const memberSnap = await getDoc(memberRef);
-          if (memberSnap.exists()) {
-            const data = memberSnap.data();
-            const lp =
-              typeof data.leaguePoints === "number" ? data.leaguePoints : 0;
-            const rank = getRankForPL(lp);
-
-            membersData.push({
-              id: memberId,
-              name:
-                data.name ||
-                data.displayName ||
-                (data.email ? data.email.split("@")[0] : "Jugador"),
-              email: data.email || "",
-              profilePicture: data.profilePicture || data.photoURL || "",
-              leaguePoints: lp,
-              rankLabel: rank.label,
-              rankShort: rank.short,
-              rankImage: rank.image,
-            });
-          }
-        } catch (err) {
-          console.error("Error cargando miembro del club en Home:", err);
-        }
-      }
-
-      membersData.sort((a, b) => b.leaguePoints - a.leaguePoints);
-
-      setClubMembers(membersData);
-      setSelectedMember(membersData[0] || null);
-    };
-
-    loadMembers();
-  }, [activeClub?.id, activeClub?.members]);
-
-  // -----------------------------
-  // Escuchar torneos del club activo
-  // -----------------------------
-  useEffect(() => {
-    if (!userData?.activeClubId) {
-      setTournaments([]);
-      return;
     }
 
-    const q = query(
-      collection(db, "tournaments"),
-      where("clubId", "==", userData.activeClubId)
-    );
+    loadMemberDetail();
+  }, [selectedMember]);
 
-    const unsub = onSnapshot(
-      q,
-      (snapshot) => {
-        const data = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
-        data.sort((a, b) => {
-          const da = a.createdAt || "";
-          const dbb = b.createdAt || "";
-          return dbb.localeCompare(da);
-        });
-        setTournaments(data);
-      },
-      (err) => {
-        console.error("Error escuchando torneos en Home:", err);
-      }
-    );
-
-    return () => unsub();
-  }, [userData?.activeClubId]);
-
-  const activeTournaments = useMemo(
-    () => tournaments.filter((t) => t.status === "active"),
-    [tournaments]
-  );
-
-  const completedTournaments = useMemo(
-    () => tournaments.filter((t) => t.status === "completed"),
-    [tournaments]
-  );
-
-  // -----------------------------
-  // Abrir detalle de jugador
-  // -----------------------------
-  const openMemberDetail = async (member) => {
-    if (!member) return;
-    setMemberDetailLoading(true);
-
-    try {
-      const ref = doc(db, "users", member.id);
-      const snap = await getDoc(ref);
-
-      let detailStats = null;
-      let recentMatches = [];
-
-      if (snap.exists()) {
-        const data = snap.data();
-        const s = data.stats || {};
-
-        const totalMatches =
-          typeof s.totalMatches === "number"
-            ? s.totalMatches
-            : data.totalMatches || 0;
-        const wins =
-          typeof s.wins === "number" ? s.wins : data.wins || 0;
-        const losses =
-          typeof s.losses === "number" ? s.losses : data.losses || 0;
-        const tournamentsPlayed =
-          typeof s.tournamentsPlayed === "number"
-            ? s.tournamentsPlayed
-            : data.tournamentsPlayed || 0;
-        const winRate =
-          totalMatches > 0 ? Math.round((wins / totalMatches) * 100) : 0;
-
-        detailStats = {
-          totalMatches,
-          wins,
-          losses,
-          tournamentsPlayed,
-          winRate,
-        };
-
-        if (Array.isArray(s.recentMatches)) {
-          recentMatches = s.recentMatches;
-        } else if (Array.isArray(data.recentMatches)) {
-          recentMatches = data.recentMatches;
-        }
-      }
-
-      setMemberDetail({
-        ...member,
-        stats: detailStats,
-        recentMatches,
-      });
-    } catch (err) {
-      console.error("Error cargando detalle de jugador:", err);
-      setMemberDetail({
-        ...member,
-        stats: null,
-        recentMatches: [],
-      });
-    } finally {
-      setMemberDetailLoading(false);
+  // Top 3 miembros del club (con fallback)
+  const top3Members = useMemo(() => {
+    if (clubMembers && clubMembers.length > 0) {
+      return clubMembers.slice(0, 3);
     }
-  };
 
-  // -----------------------------
-  // Render: estados base
-  // -----------------------------
+    if (userData?.activeClubId && userData) {
+      const lp =
+        typeof userData.leaguePoints === "number" ? userData.leaguePoints : 0;
+      const rankInfo = getRankInfoFromData(userData.rank, lp);
+
+      return [
+        {
+          id: userData.id,
+          name:
+            userData.displayName ||
+            userData.name ||
+            userData.email ||
+            "Jugador",
+          email: userData.email || "",
+          profilePicture: userData.profilePicture || "",
+          leaguePoints: lp,
+          rankLabel: rankInfo.label,
+          rankShort: rankInfo.short,
+          rankImage: rankInfo.image,
+        },
+      ];
+    }
+
+    return [];
+  }, [clubMembers, userData]);
+
+  const pl = userData?.leaguePoints || 0;
+  const rankInfo = getRankInfoFromData(userData?.rank, pl);
+
+  // --------------------------
+  // Render
+  // --------------------------
   if (!user) {
     return (
       <div
         style={{
-          padding: "1rem",
-          paddingBottom: "4rem",
+          padding: "1.2rem 0.5rem 5.5rem",
           maxWidth: 480,
           margin: "0 auto",
         }}
       >
-        <p style={{ color: "var(--muted)", fontSize: "0.9rem" }}>
-          Inicia sesión para ver tu panel.
-        </p>
+        <p>Inicia sesión para ver tu panel.</p>
       </div>
     );
   }
@@ -366,131 +470,123 @@ export default function Home() {
     return (
       <div
         style={{
-          padding: "1.5rem",
-          paddingBottom: "4rem",
+          padding: "1.2rem 0.5rem 5.5rem",
           maxWidth: 480,
           margin: "0 auto",
         }}
       >
-        <p style={{ color: "var(--muted)", fontSize: "0.9rem" }}>
-          Cargando tu panel...
-        </p>
+        <p style={{ color: "var(--muted)" }}>Cargando tu panel...</p>
       </div>
     );
   }
-
-  const pl = userData?.leaguePoints || 0;
-  const rankInfo = getRankForPL(pl);
 
   return (
     <>
       <div
         style={{
-          display: "flex",
-          flexDirection: "column",
-          gap: "1rem",
-          paddingBottom: "0.75rem",
+          padding: "1.2rem 0.3rem 5.5rem",
+          maxWidth: 480,
+          margin: "0 auto",
         }}
       >
-        {/* 1. HEADER HERO */}
-        <section
-          style={{
-            borderRadius: "1rem",
-            padding: "1rem",
-            border: "1px solid var(--border)",
-            background: "var(--bg-elevated)",
-            display: "flex",
-            gap: "0.9rem",
-          }}
-        >
-          {/* Avatar */}
+        {/* 1. HEADER BIENVENIDA */}
+        <section style={{ marginBottom: "0.6rem" }}>
           <div
             style={{
-              width: 110,
-              height: 110,
-              borderRadius: "999px",
-              overflow: "hidden",
+              borderRadius: "1rem",
               border: "1px solid var(--border)",
-              background: "var(--bg)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              flexShrink: 0,
+              padding: "0.75rem 0.8rem",
+              background: "var(--bg-elevated)",
             }}
           >
-            {userData?.profilePicture ? (
-              <img
-                src={userData.profilePicture}
-                alt="Avatar"
-                style={{
-                  width: "100%",
-                  height: "100%",
-                  objectFit: "cover",
-                }}
-              />
-            ) : (
-              <span
-                style={{
-                  fontSize: "1.5rem",
-                  fontWeight: 700,
-                }}
-              >
-                {(userData?.name || "J")[0].toUpperCase()}
-              </span>
-            )}
-          </div>
-
-          {/* Texto + rango */}
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <p
-              style={{
-                margin: 0,
-                fontSize: "0.8rem",
-                color: "var(--muted)",
-              }}
-            >
-              Hola,
-            </p>
-            <h2
-              style={{
-                margin: "0.1rem 0 0.2rem",
-                fontSize: "1.1rem",
-                fontWeight: 700,
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-              }}
-            >
-              {userData?.name || "Jugador"}
-            </h2>
-            {activeClub ? (
-              <p
-                style={{
-                  margin: 0,
-                  fontSize: "0.8rem",
-                  color: "var(--muted)",
-                }}
-              >
-                Club activo:{" "}
-                <strong style={{ color: "var(--text-primary)" }}>
-                  {activeClub.name}
-                </strong>
-              </p>
-            ) : (
-              <p
-                style={{
-                  margin: 0,
-                  fontSize: "0.8rem",
-                  color: "var(--muted)",
-                }}
-              >
-                Aún no tienes un club activo.
-              </p>
-            )}
-
             <div
               style={{
-                marginTop: "0.6rem",
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "flex-start",
+                gap: "0.75rem",
+              }}
+            >
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <p
+                  style={{
+                    margin: 0,
+                    fontSize: "0.8rem",
+                    color: "var(--muted)",
+                  }}
+                >
+                  Bienvenido de vuelta
+                </p>
+                <p
+                  style={{
+                    margin: "0.15rem 0 0.4rem",
+                    fontSize: "1.1rem",
+                    fontWeight: 600,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {userData?.displayName || "Jugador de League of Padel"}
+                </p>
+                <p
+                  style={{
+                    margin: 0,
+                    fontSize: "0.8rem",
+                    color: "var(--muted)",
+                  }}
+                >
+                  Prepárate para subir de rango en tu próximo Torneo.
+                </p>
+              </div>
+
+              {userData?.profilePicture ? (
+                <div
+                  style={{
+                    width: 75,
+                    height: 75,
+                    borderRadius: "999px",
+                    overflow: "hidden",
+                    border: "1px solid var(--border)",
+                    background: "var(--bg)",
+                    flexShrink: 0,
+                  }}
+                >
+                  <img
+                    src={userData.profilePicture}
+                    alt="Foto de perfil"
+                    style={{
+                      width: "100%",
+                      height: "100%",
+                      objectFit: "cover",
+                    }}
+                  />
+                </div>
+              ) : (
+                <div
+                  style={{
+                    width: 52,
+                    height: 52,
+                    borderRadius: "999px",
+                    border: "1px solid var(--border)",
+                    background: "var(--bg)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    flexShrink: 0,
+                    fontSize: "1.3rem",
+                    fontWeight: 600,
+                  }}
+                >
+                  {(userData?.displayName || "J")[0].toUpperCase()}
+                </div>
+              )}
+            </div>
+
+            {/* RANGO ACTUAL */}
+            <div
+              style={{
+                marginTop: "0.7rem",
                 display: "flex",
                 alignItems: "center",
                 gap: "0.6rem",
@@ -510,8 +606,8 @@ export default function Home() {
                   src={rankInfo.image}
                   alt={rankInfo.label}
                   style={{
-                    width: 54,
-                    height: 54,
+                    width: 65,
+                    height: 65,
                     objectFit: "contain",
                     display: "block",
                   }}
@@ -549,10 +645,7 @@ export default function Home() {
                 >
                   <div
                     style={{
-                      width: `${Math.max(
-                        0,
-                        Math.min(100, pl % 100)
-                      )}%`,
+                      width: `${Math.max(0, Math.min(100, pl % 100))}%`,
                       height: "100%",
                       background:
                         "linear-gradient(90deg, rgba(59,130,246,1), rgba(56,189,248,1))",
@@ -590,10 +683,7 @@ export default function Home() {
               gap: "0.6rem",
             }}
           >
-            <StatCard
-              label="Partidos jugados"
-              value={stats.totalMatches}
-            />
+            <StatCard label="Partidos jugados" value={stats.totalMatches} />
             <StatCard label="Victorias" value={stats.totalWins} />
             <StatCard
               label="Winrate"
@@ -619,166 +709,165 @@ export default function Home() {
               style={{
                 margin: 0,
                 fontSize: "0.95rem",
-                flex: 1,
               }}
             >
               Top ranking del club
             </h3>
-            {clubMembers.length > 0 && (
-              <button
-                type="button"
-                onClick={() => setShowRankingModal(true)}
-                style={{
-                  border: "none",
-                  background: "transparent",
-                  fontSize: "0.75rem",
-                  color: "var(--accent)",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 4,
-                  cursor: "pointer",
-                }}
-              >
-                Ver ranking completo
-                <Icon
-                  name="chevron-right"
-                  size={12}
-                  color="var(--accent)"
-                />
-              </button>
-            )}
+            <button
+              type="button"
+              onClick={() => setShowRankingModal(true)}
+              style={{
+                marginLeft: "auto",
+                borderRadius: "999px",
+                border: "1px solid var(--border)",
+                padding: "0.2rem 0.5rem",
+                fontSize: "0.75rem",
+                background: "transparent",
+                cursor: "pointer",
+              }}
+            >
+              Ver ranking completo
+            </button>
           </div>
 
-          {(!activeClub || clubMembers.length === 0) && (
-            <p
-              style={{
-                margin: 0,
-                fontSize: "0.8rem",
-                color: "var(--muted)",
-              }}
-            >
-              Cuando tu club tenga miembros con PL, verás aquí el top 3.
-            </p>
-          )}
+          <div
+            style={{
+              borderRadius: "1rem",
+              border: "1px solid var(--border)",
+              padding: "0.7rem 0.8rem",
+              background: "var(--bg-elevated)",
+            }}
+          >
+            {top3Members.length === 0 ? (
+              <p
+                style={{
+                  margin: 0,
+                  fontSize: "0.78rem",
+                  color: "var(--muted)",
+                }}
+              >
+                {userData?.activeClubId
+                  ? "Cuando haya jugadores con PL en tu club, aquí verás el top ranking."
+                  : "Cuando elijas un club activo y juegues partidos, aquí verás el top ranking."}
+              </p>
+            ) : (
+              <div
+                style={{
+                  display: "flex",
+                  gap: "0.6rem",
+                  alignItems: "flex-end",
+                  justifyContent: "space-between",
+                }}
+              >
+                {top3Members.map((m, index) => {
+                  const isFirst = index === 0;
+                  const isSecond = index === 1;
+                  const height = isFirst ? 75 : isSecond ? 75 : 75;
 
-          {activeClub && clubMembers.length > 0 && (
-            <div
-              style={{
-                borderRadius: "1rem",
-                border: "1px solid var(--border)",
-                background: "var(--bg-elevated)",
-                padding: "0.8rem 0.9rem",
-                display: "flex",
-                gap: "0.8rem",
-                justifyContent: "space-between",
-              }}
-            >
-              {clubMembers.slice(0, 3).map((m, index) => (
-                <button
-                  key={m.id}
-                  type="button"
-                  onClick={() => {
-                    setSelectedMember(m);
-                    setShowRankingModal(true);
-                  }}
-                  style={{
-                    flex: 1,
-                    border: "none",
-                    background: "transparent",
-                    padding: 0,
-                    display: "flex",
-                    flexDirection: "column",
-                    alignItems: "center",
-                    gap: "0.3rem",
-                    cursor: "pointer",
-                  }}
-                >
-                  <div
-                    style={{
-                      fontSize: "0.65rem",
-                      color: "var(--muted)",
-                    }}
-                  >
-                    #{index + 1}
-                  </div>
-
-                  <div
-                    style={{
-                      width: 75,
-                      height: 75,
-                      borderRadius: "999px",
-                      overflow: "hidden",
-                      border: "1px solid var(--border)",
-                      background: "var(--bg)",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                    }}
-                  >
-                    {m.profilePicture ? (
-                      <img
-                        src={m.profilePicture}
-                        alt={m.name}
+                  return (
+                    <button
+                      key={m.id}
+                      type="button"
+                      onClick={() => {
+                        setSelectedMember(m);
+                        setShowMemberDetailModal(true);
+                      }}
+                      style={{
+                        flex: 1,
+                        border: "none",
+                        background: "transparent",
+                        padding: 0,
+                        cursor: "pointer",
+                        display: "flex",
+                        flexDirection: "column",
+                        alignItems: "center",
+                        gap: "0.35rem",
+                      }}
+                    >
+                      <div
                         style={{
-                          width: "100%",
-                          height: "100%",
-                          objectFit: "cover",
+                          fontSize: "0.7rem",
+                          color: "var(--muted)",
+                        }}
+                      >
+                        #{index + 1}
+                      </div>
+                      <div
+                        style={{
+                          width: height,
+                          height: height,
+                          borderRadius: "999px",
+                          overflow: "hidden",
+                          border: isFirst
+                            ? "2px solid var(--accent)"
+                            : "1px solid var(--border)",
+                          background: "var(--bg)",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                        }}
+                      >
+                        {m.profilePicture ? (
+                          <img
+                            src={m.profilePicture}
+                            alt={m.name}
+                            style={{
+                              width: "100%",
+                              height: "100%",
+                              objectFit: "cover",
+                            }}
+                          />
+                        ) : (
+                          <span
+                            style={{
+                              fontSize: isFirst ? "1.4rem" : "1.1rem",
+                              fontWeight: 700,
+                            }}
+                          >
+                            {(m.name || "J")[0].toUpperCase()}
+                          </span>
+                        )}
+                      </div>
+                      <img
+                        src={m.rankImage}
+                        alt={m.rankLabel}
+                        style={{
+                          width: 50,
+                          height: 50,
+                          objectFit: "contain",
                         }}
                       />
-                    ) : (
-                      <span
+                      <div
                         style={{
-                          fontSize: "1.3rem",
-                          fontWeight: 700,
+                          fontSize: "0.78rem",
+                          fontWeight: 600,
+                          maxWidth: "100%",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
                           color: "var(--fg)",
                         }}
                       >
-                        {(m.name || "J")[0].toUpperCase()}
-                      </span>
-                    )}
-                  </div>
-
-                  <img
-                    src={m.rankImage}
-                    alt={m.rankLabel}
-                    style={{
-                      width: 45,
-                      height: 45,
-                      objectFit: "contain",
-                    }}
-                  />
-
-                  <div
-                    style={{
-                      fontSize: "0.78rem",
-                      fontWeight: 600,
-                      maxWidth: 90,
-                      textAlign: "center",
-                      whiteSpace: "nowrap",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      color: "var(--fg)",
-                    }}
-                  >
-                    {m.name}
-                  </div>
-
-                  <div
-                    style={{
-                      fontSize: "0.7rem",
-                      color: "var(--muted)",
-                    }}
-                  >
-                    {m.rankLabel}
-                  </div>
-                </button>
-              ))}
-            </div>
-          )}
+                        {m.name}
+                      </div>
+                      <div
+                        style={{
+                          fontSize: "0.75rem",
+                          color: "var(--muted)",
+                        }}
+                      >
+                        {m.rankLabel}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         </section>
 
-        {/* 4. ACTIVIDAD RECIENTE (últimos 3 partidos del usuario) */}
-        <section style={{ marginBottom: "0.4rem" }}>
+        {/* 4. ACTIVIDAD RECIENTE (HOME) */}
+        <section style={{ marginTop: "0.8rem", marginBottom: "0.8rem" }}>
           <h3
             style={{
               margin: "0 0 0.4rem",
@@ -791,9 +880,13 @@ export default function Home() {
           {userRecentMatches && userRecentMatches.length > 0 ? (
             <div
               style={{
+                borderRadius: "1rem",
+                border: "1px solid var(--border)",
+                padding: "0.7rem 0.8rem",
+                background: "var(--bg-elevated)",
                 display: "flex",
                 flexDirection: "column",
-                gap: "0.35rem",
+                gap: "0.4rem",
               }}
             >
               {userRecentMatches.slice(0, 3).map((m, idx) => {
@@ -803,6 +896,7 @@ export default function Home() {
                   plDelta != null
                     ? `${plDelta > 0 ? "+" : ""}${plDelta} PL`
                     : null;
+
                 const dateStr =
                   m.date && !Number.isNaN(Date.parse(m.date))
                     ? new Date(m.date).toLocaleDateString("es-MX", {
@@ -810,10 +904,10 @@ export default function Home() {
                         month: "short",
                       })
                     : null;
+
                 const title =
-                  m.tournamentName ||
-                  m.tournament ||
-                  "Partido rankeado";
+                  m.tournamentName || m.tournament || "Partido rankeado";
+
                 const score =
                   m.score ||
                   (typeof m.scoreA === "number" &&
@@ -827,8 +921,8 @@ export default function Home() {
                     style={{
                       borderRadius: "0.7rem",
                       border: "1px solid var(--border)",
-                      background: "var(--bg-elevated)",
-                      padding: "0.45rem 0.55rem",
+                      background: "var(--bg)",
+                      padding: "0.4rem 0.55rem",
                       display: "flex",
                       alignItems: "center",
                       gap: "0.5rem",
@@ -872,7 +966,9 @@ export default function Home() {
                           color: "var(--muted)",
                         }}
                       >
-                        {score ? `Marcador: ${score}` : "Marcador no disponible"}
+                        {score
+                          ? `Marcador: ${score}`
+                          : "Marcador no disponible"}
                         {dateStr ? ` · ${dateStr}` : ""}
                       </p>
                     </div>
@@ -904,161 +1000,42 @@ export default function Home() {
                 color: "var(--muted)",
               }}
             >
-              Cuando juegues partidos con PL, verás aquí tus últimos resultados.
+              Muy pronto verás aquí tus últimos partidos y cambios de PL.
             </p>
           )}
         </section>
 
-        {/* 5. RESUMEN DE TORNEOS */}
-        <section style={{ marginBottom: "0.4rem" }}>
-          <h3
-            style={{
-              margin: "0 0 0.4rem",
-              fontSize: "0.95rem",
-            }}
-          >
-            Resumen de torneos
-          </h3>
-
-          {tournaments.length === 0 ? (
-            <p
-              style={{
-                margin: 0,
-                fontSize: "0.8rem",
-                color: "var(--muted)",
-              }}
-            >
-              No hay torneos registrados en tu club todavía.
-            </p>
-          ) : (
-            <div
-              style={{
-                borderRadius: "1rem",
-                border: "1px solid var(--border)",
-                background: "var(--bg-elevated)",
-                padding: "0.7rem 0.8rem",
-                display: "flex",
-                flexDirection: "column",
-                gap: "0.6rem",
-              }}
-            >
-              <div
-                style={{
-                  display: "flex",
-                  gap: "0.6rem",
-                }}
-              >
-                <SummaryPill
-                  label="Activos"
-                  value={activeTournaments.length}
-                />
-                <SummaryPill
-                  label="Finalizados"
-                  value={completedTournaments.length}
-                />
-              </div>
-
-              {activeTournaments.length > 0 && (
-                <div
-                  style={{
-                    marginTop: "0.3rem",
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: "0.35rem",
-                  }}
-                >
-                  <p
-                    style={{
-                      margin: 0,
-                      fontSize: "0.75rem",
-                      color: "var(--muted)",
-                    }}
-                  >
-                    Torneos activos
-                  </p>
-                  {activeTournaments.slice(0, 3).map((t) => (
-                    <button
-                      key={t.id}
-                      type="button"
-                      onClick={() => navigate(`/torneos/${t.id}/jugar`)}
-                      style={{
-                        borderRadius: "0.6rem",
-                        border: "1px solid var(--border)",
-                        padding: "0.45rem 0.5rem",
-                        background: "var(--bg)",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "space-between",
-                        cursor: "pointer",
-                      }}
-                    >
-                      <div
-                        style={{
-                          display: "flex",
-                          flexDirection: "column",
-                          gap: 2,
-                        }}
-                      >
-                        <span
-                          style={{
-                            fontSize: "0.82rem",
-                            fontWeight: 600,
-                          }}
-                        >
-                          {t.name || "Torneo sin nombre"}
-                        </span>
-                        <span
-                          style={{
-                            fontSize: "0.72rem",
-                            color: "var(--muted)",
-                          }}
-                        >
-                          Canchas: {t.courtCount || 1}
-                        </span>
-                      </div>
-                      <Icon
-                        name="chevron-right"
-                        size={14}
-                        color="var(--muted)"
-                      />
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-        </section>
       </div>
 
-      {/* MODAL RANKING COMPLETO */}
+      {/* MODAL: RANKING COMPLETO DEL CLUB (solo lista) */}
       {showRankingModal && (
         <div
+          onClick={() => setShowRankingModal(false)}
           style={{
             position: "fixed",
             inset: 0,
-            background: "rgba(0,0,0,0.5)",
+            background: "rgba(0,0,0,0.9)", // 👈 fondo oscuro, ya no transparente
             display: "flex",
             justifyContent: "center",
             alignItems: "flex-end",
             zIndex: 999,
           }}
-          onClick={() => setShowRankingModal(false)}
         >
           <div
+            onClick={(e) => e.stopPropagation()}
             style={{
               width: "100%",
               maxWidth: 480,
               maxHeight: "80vh",
-              background: "var(--bg-elevated)",
-              borderRadius: "1rem 1rem 0 0",
-              padding: "0.8rem 0.9rem",
+              background: "var(--bg-body)",
+              borderRadius: "1.1rem 1.1rem 0 0",
               border: "1px solid var(--border)",
               borderBottom: "none",
+              padding: "0.8rem 0.9rem 0.9rem",
               display: "flex",
               flexDirection: "column",
               gap: "0.6rem",
             }}
-            onClick={(e) => e.stopPropagation()}
           >
             <div
               style={{
@@ -1074,136 +1051,64 @@ export default function Home() {
               style={{
                 display: "flex",
                 alignItems: "center",
-                gap: "0.4rem",
+                gap: "0.6rem",
               }}
             >
-              <h3
+              <div
                 style={{
-                  margin: 0,
-                  fontSize: "0.95rem",
-                  flex: 1,
+                  width: 30,
+                  height: 30,
+                  borderRadius: "999px",
+                  border: "1px solid var(--border)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  background: "var(--bg)",
                 }}
               >
-                Ranking completo del club
-              </h3>
+                <Icon name="podium" size={16} color="var(--accent)" />
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <p
+                  style={{
+                    margin: 0,
+                    fontSize: "0.9rem",
+                    fontWeight: 600,
+                  }}
+                >
+                  Ranking del club
+                </p>
+                <p
+                  style={{
+                    margin: 0,
+                    fontSize: "0.78rem",
+                    color: "var(--muted)",
+                  }}
+                >
+                  Toca un jugador para ver su detalle.
+                </p>
+              </div>
               <button
                 type="button"
                 onClick={() => setShowRankingModal(false)}
                 style={{
                   border: "none",
                   background: "transparent",
-                  cursor: "pointer",
                   padding: 4,
+                  cursor: "pointer",
                 }}
               >
                 <Icon name="close" size={16} color="var(--muted)" />
               </button>
             </div>
 
-            {selectedMember && (
-              <button
-                type="button"
-                onClick={() => openMemberDetail(selectedMember)}
-                style={{
-                  borderRadius: "0.9rem",
-                  border: "1px solid var(--border)",
-                  background: "var(--bg)",
-                  padding: "0.7rem 0.8rem",
-                  display: "flex",
-                  gap: "0.7rem",
-                  alignItems: "center",
-                  textAlign: "left",
-                  cursor: "pointer",
-                }}
-              >
-                <div
-                  style={{
-                    width: 64,
-                    height: 64,
-                    borderRadius: "999px",
-                    overflow: "hidden",
-                    border: "1px solid var(--border)",
-                    background: "var(--bg-elevated)",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    flexShrink: 0,
-                  }}
-                >
-                  {selectedMember.profilePicture ? (
-                    <img
-                      src={selectedMember.profilePicture}
-                      alt={selectedMember.name}
-                      style={{
-                        width: "100%",
-                        height: "100%",
-                        objectFit: "cover",
-                      }}
-                    />
-                  ) : (
-                    <span
-                      style={{
-                        fontSize: "1.6rem",
-                        fontWeight: 700,
-                      }}
-                    >
-                      {(selectedMember.name || "J")[0].toUpperCase()}
-                    </span>
-                  )}
-                </div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <p
-                    style={{
-                      margin: 0,
-                      fontSize: "0.8rem",
-                      color: "var(--muted)",
-                    }}
-                  >
-                    Detalle rápido
-                  </p>
-                  <p
-                    style={{
-                      margin: "0.1rem 0 0.2rem",
-                      fontSize: "0.95rem",
-                      fontWeight: 600,
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                      color: "var(--fg)",
-                    }}
-                  >
-                    {selectedMember.name}
-                  </p>
-                  <p
-                    style={{
-                      margin: 0,
-                      fontSize: "0.8rem",
-                      color: "var(--muted)",
-                    }}
-                  >
-                    {selectedMember.rankLabel} •{" "}
-                    {selectedMember.leaguePoints} PL
-                  </p>
-                </div>
-                <img
-                  src={selectedMember.rankImage}
-                  alt={selectedMember.rankLabel}
-                  style={{
-                    width: 46,
-                    height: 46,
-                    objectFit: "contain",
-                  }}
-                />
-              </button>
-            )}
-
             <div
               style={{
-                marginTop: "0.2rem",
+                marginTop: "0.3rem",
                 display: "flex",
                 flexDirection: "column",
                 gap: "0.35rem",
-                paddingBottom: "0.3rem",
+                paddingBottom: "0.4rem",
                 overflowY: "auto",
               }}
             >
@@ -1211,14 +1116,14 @@ export default function Home() {
                 <button
                   key={m.id}
                   type="button"
-                  onClick={() => setSelectedMember(m)}
+                  onClick={() => {
+                    setSelectedMember(m);
+                    setShowMemberDetailModal(true);
+                  }}
                   style={{
                     borderRadius: "0.7rem",
                     border: "1px solid var(--border)",
-                    background:
-                      selectedMember?.id === m.id
-                        ? "var(--bg)"
-                        : "transparent",
+                    background: "transparent",
                     padding: "0.5rem 0.6rem",
                     display: "flex",
                     alignItems: "center",
@@ -1284,7 +1189,6 @@ export default function Home() {
                         overflow: "hidden",
                         textOverflow: "ellipsis",
                         whiteSpace: "nowrap",
-                        color: "var(--fg)",
                       }}
                     >
                       {m.name}
@@ -1313,52 +1217,40 @@ export default function Home() {
         </div>
       )}
 
-      {/* MODAL DETALLE DE JUGADOR */}
-      {memberDetail && (
+      {/* MODAL: DETALLE DEL JUGADOR */}
+      {showMemberDetailModal && selectedMember && (
         <div
+          onClick={() => setShowMemberDetailModal(false)}
           style={{
             position: "fixed",
             inset: 0,
-            background: "rgba(0,0,0,0.6)",
+            background: "rgba(0, 0, 0, 0.9)",
             display: "flex",
             justifyContent: "center",
-            alignItems: "flex-end",
+            alignItems: "center",
             zIndex: 1000,
           }}
-          onClick={() => setMemberDetail(null)}
         >
           <div
+            onClick={(e) => e.stopPropagation()}
             style={{
               width: "100%",
               maxWidth: 480,
-              maxHeight: "85vh",
-              background: "var(--bg-elevated)",
-              borderRadius: "1rem 1rem 0 0",
-              padding: "0.9rem 1rem",
+              maxHeight: "80vh",
+              background: "var(--bg-body)",
+              borderRadius: "1rem",
               border: "1px solid var(--border)",
-              borderBottom: "none",
+              padding: "0.8rem 0.9rem 0.9rem",
               display: "flex",
               flexDirection: "column",
-              gap: "0.7rem",
+              gap: "0.6rem",
             }}
-            onClick={(e) => e.stopPropagation()}
           >
-            <div
-              style={{
-                width: 40,
-                height: 4,
-                borderRadius: 999,
-                background: "var(--border)",
-                alignSelf: "center",
-                marginBottom: "0.2rem",
-              }}
-            />
-
             <div
               style={{
                 display: "flex",
                 alignItems: "center",
-                gap: "0.4rem",
+                gap: "0.6rem",
               }}
             >
               <h3
@@ -1372,19 +1264,19 @@ export default function Home() {
               </h3>
               <button
                 type="button"
-                onClick={() => setMemberDetail(null)}
+                onClick={() => setShowMemberDetailModal(false)}
                 style={{
                   border: "none",
                   background: "transparent",
-                  cursor: "pointer",
                   padding: 4,
+                  cursor: "pointer",
                 }}
               >
                 <Icon name="close" size={16} color="var(--muted)" />
               </button>
             </div>
 
-            {memberDetailLoading ? (
+            {memberDetailLoading || !memberDetail ? (
               <p
                 style={{
                   margin: 0,
@@ -1405,8 +1297,8 @@ export default function Home() {
                 >
                   <div
                     style={{
-                      width: 88,
-                      height: 88,
+                      width: 120,
+                      height: 120,
                       borderRadius: "999px",
                       overflow: "hidden",
                       border: "1px solid var(--border)",
@@ -1477,8 +1369,8 @@ export default function Home() {
                     src={memberDetail.rankImage}
                     alt={memberDetail.rankLabel}
                     style={{
-                      width: 56,
-                      height: 56,
+                      width: 95,
+                      height: 95,
                       objectFit: "contain",
                     }}
                   />
@@ -1525,6 +1417,7 @@ export default function Home() {
 
                 <div
                   style={{
+                    marginTop: "0.45rem",
                     display: "flex",
                     flexDirection: "column",
                     gap: "0.3rem",
@@ -1559,8 +1452,7 @@ export default function Home() {
                             ? `${plDelta > 0 ? "+" : ""}${plDelta} PL`
                             : null;
                         const dateStr =
-                          m.date &&
-                          !Number.isNaN(Date.parse(m.date))
+                          m.date && !Number.isNaN(Date.parse(m.date))
                             ? new Date(m.date).toLocaleDateString("es-MX", {
                                 day: "2-digit",
                                 month: "short",
@@ -1662,8 +1554,8 @@ export default function Home() {
                         color: "var(--muted)",
                       }}
                     >
-                      Este jugador aún no tiene partidos recientes registrados
-                      con PL.
+                      Este jugador aún no tiene partidos recientes
+                      registrados con PL.
                     </p>
                   )}
                 </div>
@@ -1708,15 +1600,14 @@ function StatCard({ label, value }) {
   );
 }
 
-function SummaryPill({ label, value }) {
+function MiniStat({ label, value }) {
   return (
     <div
       style={{
-        flex: 1,
-        borderRadius: "0.9rem",
-        padding: "0.5rem 0.6rem",
-        background: "var(--bg)",
+        borderRadius: "0.7rem",
         border: "1px solid var(--border)",
+        padding: "0.4rem 0.45rem",
+        background: "var(--bg)",
       }}
     >
       <p
@@ -1730,33 +1621,8 @@ function SummaryPill({ label, value }) {
       </p>
       <p
         style={{
-          margin: "0.15rem 0 0",
-          fontSize: "0.95rem",
-          fontWeight: 600,
-        }}
-      >
-        {value}
-      </p>
-    </div>
-  );
-}
-
-function MiniStat({ label, value }) {
-  return (
-    <div>
-      <p
-        style={{
-          margin: 0,
-          fontSize: "0.7rem",
-          color: "var(--muted)",
-        }}
-      >
-        {label}
-      </p>
-      <p
-        style={{
           margin: "0.1rem 0 0",
-          fontSize: "0.85rem",
+          fontSize: "0.86rem",
           fontWeight: 600,
         }}
       >
