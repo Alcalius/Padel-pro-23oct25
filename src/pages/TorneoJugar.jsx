@@ -33,6 +33,16 @@ export default function TorneoJugar() {
   const [customSelected, setCustomSelected] = useState([]);
   const [customBalanceLabel, setCustomBalanceLabel] = useState("");
 
+  // Modal de costos
+  const [showCostModal, setShowCostModal] = useState(false);
+  const [courtCostPerHour, setCourtCostPerHour] = useState("");
+  const [hoursCourt1, setHoursCourt1] = useState("");
+  const [hoursCourt2, setHoursCourt2] = useState("");
+  const [costResult, setCostResult] = useState(null);
+
+  // Reacomodar pendientes (manual)
+  const [reorderingPending, setReorderingPending] = useState(false);
+
   const shortName = (fullName) => {
     if (!fullName) return "Jugador";
     const trimmed = fullName.trim();
@@ -561,6 +571,70 @@ export default function TorneoJugar() {
   };
 
   // -----------------------------------
+  // Reacomodar partidos pendientes (manual)
+  // -----------------------------------
+  const savePendingOrder = async (orderedPendingMatches) => {
+    setReorderingPending(true);
+    try {
+      const pendingOrderMap = {};
+      const baseTime = Date.now();
+
+      orderedPendingMatches.forEach((m, idx) => {
+        pendingOrderMap[m.id] = {
+          ...m,
+          createdAt: new Date(baseTime + idx).toISOString(),
+        };
+      });
+
+      const updatedMatches = matches.map((m) => {
+        if (m.status !== "pending") return m;
+        const updated = pendingOrderMap[m.id];
+        return updated ? updated : m;
+      });
+
+      await updateDoc(doc(db, "tournaments", tournamentId), {
+        matches: updatedMatches,
+      });
+      setMatches(updatedMatches);
+    } catch (err) {
+      console.error("Error reacomodando partidos pendientes:", err);
+      alert("No se pudo reacomodar el orden de los partidos.");
+    } finally {
+      setReorderingPending(false);
+    }
+  };
+
+  const handleMovePendingMatch = async (matchId, direction) => {
+    if (reorderingPending) return;
+
+    const list = [...sortedPendingMatches];
+    const index = list.findIndex((m) => m.id === matchId);
+    if (index === -1) return;
+
+    // En torneos de 2 canchas, los primeros 2 partidos están "en cancha"
+    // y no se deben mover. En torneos de 1 cancha se puede reordenar todo.
+    const pinnedCount = maxCourts >= 2 ? maxCourts : 0;
+    const firstMovableIndex = pinnedCount;
+
+    if (direction === "up") {
+      if (index <= firstMovableIndex) return;
+      const newIndex = index - 1;
+      const [item] = list.splice(index, 1);
+      list.splice(newIndex, 0, item);
+    } else if (direction === "down") {
+      if (index < firstMovableIndex) return;
+      if (index >= list.length - 1) return;
+      const newIndex = index + 1;
+      const [item] = list.splice(index, 1);
+      list.splice(newIndex, 0, item);
+    } else {
+      return;
+    }
+
+    await savePendingOrder(list);
+  };
+
+  // -----------------------------------
   // Partidos inteligentes / personalizados
   // -----------------------------------
   const getPlayerMatchCount = (playerId) => {
@@ -807,6 +881,67 @@ export default function TorneoJugar() {
   };
 
   // -----------------------------------
+  // Cálculo de costos
+  // -----------------------------------
+  const totalParticipants =
+    (Array.isArray(tournament?.players)
+      ? tournament.players.length
+      : 0) +
+    (Array.isArray(tournament?.guestPlayers)
+      ? tournament.guestPlayers.length
+      : 0);
+
+  const openCostModal = () => {
+    setCourtCostPerHour("");
+    setHoursCourt1("");
+    setHoursCourt2("");
+    setCostResult(null);
+    setShowCostModal(true);
+  };
+
+  const handleCalculateCosts = () => {
+    const parseNumber = (val) => {
+      if (val === "" || val == null) return 0;
+      const n = parseFloat(
+        String(val).replace(",", ".")
+      );
+      return Number.isNaN(n) ? 0 : n;
+    };
+
+    const costPerHour = parseNumber(courtCostPerHour);
+    const h1 = parseNumber(hoursCourt1);
+    const h2 = maxCourts >= 2 ? parseNumber(hoursCourt2) : 0;
+
+    if (costPerHour <= 0) {
+      alert("Ingresa un costo por hora válido (mayor a 0).");
+      return;
+    }
+    if (h1 <= 0 && h2 <= 0) {
+      alert(
+        "Ingresa al menos algunas horas de renta en una de las canchas."
+      );
+      return;
+    }
+    if (!totalParticipants || totalParticipants <= 0) {
+      alert(
+        "No se encontraron participantes en el torneo para dividir el costo."
+      );
+      return;
+    }
+
+    const totalHours = h1 + h2;
+    const totalCost = totalHours * costPerHour;
+    const perPlayer = totalCost / totalParticipants;
+
+    setCostResult({
+      totalHours,
+      totalCost,
+      perPlayer,
+      count: totalParticipants,
+    });
+  };
+
+  // -----------------------------------
   // Render
   // -----------------------------------
   if (loading || !tournament) {
@@ -933,36 +1068,62 @@ export default function TorneoJugar() {
               </div>
             </div>
 
-            <button
-              type="button"
-              onClick={handleCompleteTournament}
-              disabled={completingTournament || isTournamentCompleted}
+            <div
               style={{
-                borderRadius: "999px",
-                border: isTournamentCompleted
-                  ? "1px solid var(--border)"
-                  : "1px solid var(--accent)",
-                padding: "0.25rem 0.6rem",
-                background: isTournamentCompleted
-                  ? "transparent"
-                  : "var(--accent-soft)",
-                fontSize: "0.75rem",
-                cursor:
-                  completingTournament || isTournamentCompleted
-                    ? "default"
-                    : "pointer",
-                color: isTournamentCompleted
-                  ? "var(--muted)"
-                  : "var(--fg)",
-                whiteSpace: "nowrap",
+                display: "flex",
+                gap: "0.4rem",
+                alignItems: "center",
+                flexWrap: "wrap",
+                justifyContent: "flex-end",
               }}
             >
-              {isTournamentCompleted
-                ? "Torneo completado"
-                : completingTournament
-                ? "Completando..."
-                : "Completar torneo"}
-            </button>
+              <button
+                type="button"
+                onClick={openCostModal}
+                style={{
+                  borderRadius: "999px",
+                  border: "1px solid var(--border)",
+                  padding: "0.25rem 0.6rem",
+                  background: "transparent",
+                  fontSize: "0.75rem",
+                  cursor: "pointer",
+                  color: "var(--fg)",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                Calcular costos
+              </button>
+              <button
+                type="button"
+                onClick={handleCompleteTournament}
+                disabled={completingTournament || isTournamentCompleted}
+                style={{
+                  borderRadius: "999px",
+                  border: isTournamentCompleted
+                    ? "1px solid var(--border)"
+                    : "1px solid var(--accent)",
+                  padding: "0.25rem 0.6rem",
+                  background: isTournamentCompleted
+                    ? "transparent"
+                    : "var(--accent-soft)",
+                  fontSize: "0.75rem",
+                  cursor:
+                    completingTournament || isTournamentCompleted
+                      ? "default"
+                      : "pointer",
+                  color: isTournamentCompleted
+                    ? "var(--muted)"
+                    : "var(--fg)",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {isTournamentCompleted
+                  ? "Torneo completado"
+                  : completingTournament
+                  ? "Completando..."
+                  : "Completar torneo"}
+              </button>
+            </div>
           </div>
         )}
 
@@ -972,8 +1133,26 @@ export default function TorneoJugar() {
               marginTop: "0.5rem",
               display: "flex",
               justifyContent: "flex-end",
+              gap: "0.4rem",
+              flexWrap: "wrap",
             }}
           >
+            <button
+              type="button"
+              onClick={openCostModal}
+              style={{
+                borderRadius: "999px",
+                border: "1px solid var(--border)",
+                padding: "0.25rem 0.6rem",
+                background: "transparent",
+                fontSize: "0.75rem",
+                cursor: "pointer",
+                color: "var(--fg)",
+                whiteSpace: "nowrap",
+              }}
+            >
+              Calcular costos
+            </button>
             <button
               type="button"
               onClick={handleCompleteTournament}
@@ -1340,15 +1519,38 @@ export default function TorneoJugar() {
 
           {/* TODOS los partidos pendientes */}
           <section className="card">
-            <h2
+            <div
               style={{
-                margin: 0,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: "0.4rem",
                 marginBottom: "0.4rem",
-                fontSize: "0.95rem",
               }}
             >
-              Partidos pendientes
-            </h2>
+              <h2
+                style={{
+                  margin: 0,
+                  fontSize: "0.95rem",
+                }}
+              >
+                Partidos pendientes
+              </h2>
+              {pendingMatches.length > 0 && (
+                <span
+                  style={{
+                    fontSize: "0.7rem",
+                    color: "var(--muted)",
+                    textAlign: "right",
+                  }}
+                >
+                  Usa las flechas para reacomodar el orden.
+                  {maxCourts >= 2 &&
+                    " Los primeros 2 partidos son los que están en cancha."}
+                </span>
+              )}
+            </div>
+
             {pendingMatches.length === 0 ? (
               <p
                 style={{
@@ -1375,6 +1577,9 @@ export default function TorneoJugar() {
                   const t2Names = (m.team2 || [])
                     .map((pid) => shortName(getPlayerDisplay(pid).name))
                     .join(" & ");
+
+                  const pinnedCount = maxCourts >= 2 ? maxCourts : 0;
+                  const isPinned = maxCourts >= 2 && index < pinnedCount;
 
                   return (
                     <div
@@ -1408,12 +1613,12 @@ export default function TorneoJugar() {
 
                         <div
                           style={{
-                            width: 60,
+                            width: 90,
                             display: "flex",
                             flexDirection: "column",
                             alignItems: "center",
                             justifyContent: "center",
-                            gap: "0.1rem",
+                            gap: "0.15rem",
                           }}
                         >
                           <span
@@ -1426,22 +1631,86 @@ export default function TorneoJugar() {
                           >
                             VS
                           </span>
-                          <button
-                            type="button"
-                            onClick={(e) =>
-                              handleDeletePendingMatch(m.id, e)
-                            }
+                          <div
                             style={{
-                              border: "none",
-                              background: "transparent",
-                              color: "#ef4444",
-                              fontSize: "0.7rem",
-                              cursor: "pointer",
-                              padding: 0,
+                              display: "flex",
+                              alignItems: "center",
+                              gap: "0.3rem",
                             }}
                           >
-                            Eliminar
-                          </button>
+                            <button
+                              type="button"
+                              onClick={(e) =>
+                                handleDeletePendingMatch(m.id, e)
+                              }
+                              style={{
+                                border: "none",
+                                background: "transparent",
+                                color: "#ef4444",
+                                fontSize: "0.7rem",
+                                cursor: "pointer",
+                                padding: 0,
+                              }}
+                            >
+                              Eliminar
+                            </button>
+                            {!isPinned && (
+                              <div
+                                style={{
+                                  display: "flex",
+                                  flexDirection: "column",
+                                  gap: "0.15rem",
+                                }}
+                              >
+                                <button
+                                  type="button"
+                                  disabled={
+                                    reorderingPending || index === 0
+                                  }
+                                  onClick={() =>
+                                    handleMovePendingMatch(m.id, "up")
+                                  }
+                                  style={{
+                                    border: "none",
+                                    background: "transparent",
+                                    fontSize: "0.7rem",
+                                    cursor: reorderingPending
+                                      ? "default"
+                                      : "pointer",
+                                    color: "var(--muted)",
+                                    padding: 0,
+                                    lineHeight: 1,
+                                  }}
+                                >
+                                  ↑
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={
+                                    reorderingPending ||
+                                    index ===
+                                      sortedPendingMatches.length - 1
+                                  }
+                                  onClick={() =>
+                                    handleMovePendingMatch(m.id, "down")
+                                  }
+                                  style={{
+                                    border: "none",
+                                    background: "transparent",
+                                    fontSize: "0.7rem",
+                                    cursor: reorderingPending
+                                      ? "default"
+                                      : "pointer",
+                                    color: "var(--muted)",
+                                    padding: 0,
+                                    lineHeight: 1,
+                                  }}
+                                >
+                                  ↓
+                                </button>
+                              </div>
+                            )}
+                          </div>
                         </div>
 
                         <span
@@ -2062,6 +2331,228 @@ export default function TorneoJugar() {
             </div>
           )}
         </section>
+      )}
+
+      {/* Modal de costos */}
+      {showCostModal && (
+        <div
+          onClick={() => setShowCostModal(false)}
+          style={{
+            position: "fixed",
+            inset: 0,
+            backgroundColor: "rgba(15,23,42,0.7)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 50,
+            padding: "1rem",
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              maxWidth: 420,
+              width: "100%",
+              borderRadius: "1rem",
+              background: "var(--bg-elevated)",
+              border: "1px solid var(--border)",
+              padding: "0.9rem 1rem",
+              fontSize: "0.82rem",
+            }}
+          >
+            <h2
+              style={{
+                margin: 0,
+                marginBottom: "0.5rem",
+                fontSize: "0.95rem",
+              }}
+            >
+              Calcular costos de renta
+            </h2>
+
+            <p
+              style={{
+                margin: 0,
+                marginBottom: "0.4rem",
+                fontSize: "0.78rem",
+                color: "var(--muted)",
+              }}
+            >
+              Participantes en el torneo:{" "}
+              <strong>{totalParticipants}</strong>
+            </p>
+
+            <label
+              style={{
+                display: "block",
+                fontSize: "0.78rem",
+                marginBottom: "0.25rem",
+              }}
+            >
+              Costo por hora de una cancha
+            </label>
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              value={courtCostPerHour}
+              onChange={(e) => setCourtCostPerHour(e.target.value)}
+              placeholder="Ej. 400"
+              style={{
+                width: "100%",
+                borderRadius: "0.6rem",
+                border: "1px solid var(--border)",
+                padding: "0.35rem 0.45rem",
+                marginBottom: "0.5rem",
+                background: "var(--bg)",
+                color: "var(--fg)",
+                fontSize: "0.8rem",
+              }}
+            />
+
+            <div
+              style={{
+                display: "flex",
+                gap: "0.5rem",
+                marginBottom: "0.4rem",
+                flexWrap: "wrap",
+              }}
+            >
+              <div style={{ flex: 1, minWidth: 120 }}>
+                <label
+                  style={{
+                    display: "block",
+                    fontSize: "0.78rem",
+                    marginBottom: "0.25rem",
+                  }}
+                >
+                  Horas cancha 1
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.25"
+                  value={hoursCourt1}
+                  onChange={(e) => setHoursCourt1(e.target.value)}
+                  placeholder="Ej. 3"
+                  style={{
+                    width: "100%",
+                    borderRadius: "0.6rem",
+                    border: "1px solid var(--border)",
+                    padding: "0.35rem 0.45rem",
+                    background: "var(--bg)",
+                    color: "var(--fg)",
+                    fontSize: "0.8rem",
+                  }}
+                />
+              </div>
+
+              {maxCourts >= 2 && (
+                <div style={{ flex: 1, minWidth: 120 }}>
+                  <label
+                    style={{
+                      display: "block",
+                      fontSize: "0.78rem",
+                      marginBottom: "0.25rem",
+                    }}
+                  >
+                    Horas cancha 2
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.25"
+                    value={hoursCourt2}
+                    onChange={(e) => setHoursCourt2(e.target.value)}
+                    placeholder="Ej. 3"
+                    style={{
+                      width: "100%",
+                      borderRadius: "0.6rem",
+                      border: "1px solid var(--border)",
+                      padding: "0.35rem 0.45rem",
+                      background: "var(--bg)",
+                      color: "var(--fg)",
+                      fontSize: "0.8rem",
+                    }}
+                  />
+                </div>
+              )}
+            </div>
+
+            <div
+              style={{
+                display: "flex",
+                gap: "0.5rem",
+                marginTop: "0.35rem",
+              }}
+            >
+              <button
+                type="button"
+                onClick={handleCalculateCosts}
+                style={{
+                  flex: 1,
+                  borderRadius: "0.9rem",
+                  border: "none",
+                  padding: "0.45rem 0.6rem",
+                  background:
+                    "linear-gradient(135deg, var(--accent), rgba(59,130,246,0.9))",
+                  color: "#ffffff",
+                  fontSize: "0.8rem",
+                  fontWeight: 600,
+                  cursor: "pointer",
+                }}
+              >
+                Calcular
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowCostModal(false)}
+                style={{
+                  borderRadius: "0.9rem",
+                  border: "1px solid var(--border)",
+                  padding: "0.45rem 0.6rem",
+                  background: "transparent",
+                  fontSize: "0.8rem",
+                  color: "var(--muted)",
+                  cursor: "pointer",
+                }}
+              >
+                Cerrar
+              </button>
+            </div>
+
+            {costResult && (
+              <div
+                style={{
+                  marginTop: "0.7rem",
+                  padding: "0.55rem 0.6rem",
+                  borderRadius: "0.75rem",
+                  background: "var(--bg)",
+                  fontSize: "0.8rem",
+                }}
+              >
+                <p style={{ margin: 0, marginBottom: "0.25rem" }}>
+                  Horas totales:{" "}
+                  <strong>
+                    {costResult.totalHours.toFixed(2)} h
+                  </strong>
+                </p>
+                <p style={{ margin: 0, marginBottom: "0.25rem" }}>
+                  Costo total de renta:{" "}
+                  <strong>
+                    ${costResult.totalCost.toFixed(2)}
+                  </strong>
+                </p>
+                <p style={{ margin: 0 }}>
+                  A cada jugador ({costResult.count}) le toca:{" "}
+                  <strong>
+                    ${costResult.perPlayer.toFixed(2)}
+                  </strong>
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
       )}
 
       <style>{`

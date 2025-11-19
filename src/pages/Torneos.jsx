@@ -13,6 +13,21 @@ import { useAuth } from "../context/AuthContext";
 import { useNavigate } from "react-router-dom";
 import Icon from "../components/common/Icon";
 
+const MONTH_NAMES_ES = [
+  "Enero",
+  "Febrero",
+  "Marzo",
+  "Abril",
+  "Mayo",
+  "Junio",
+  "Julio",
+  "Agosto",
+  "Septiembre",
+  "Octubre",
+  "Noviembre",
+  "Diciembre",
+];
+
 export default function Torneos() {
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -33,16 +48,20 @@ export default function Torneos() {
 
   const [form, setForm] = useState({
     name: "",
-    players: [], // ids de usuarios del club
-    guests: [], // nombres de invitados
+    players: [],
+    guests: [],
     guestName: "",
-    matchCount: 8, // número de partidos (slider)
-    courts: 1, // número de canchas simultáneas
+    matchCount: 8,
+    courts: 1,
   });
 
-  // -----------------------------
-  // Helpers
-  // -----------------------------
+  // Vista previa
+  const [previewMatches, setPreviewMatches] = useState([]);
+  const [showPreview, setShowPreview] = useState(false);
+
+  // Modal torneos completados
+  const [showCompletedModal, setShowCompletedModal] = useState(false);
+
   const resetMessages = () => {
     setErrorMsg("");
     setSuccessMsg("");
@@ -53,10 +72,28 @@ export default function Torneos() {
       ...prev,
       [field]: value,
     }));
+    if (["matchCount", "courts", "name"].includes(field)) {
+      setPreviewMatches([]);
+      setShowPreview(false);
+    }
+  };
+
+  const getAllPlayerIds = () => [
+    ...form.players,
+    ...form.guests.map((_, idx) => `guest-${idx}`),
+  ];
+
+  const getPlayerDisplayName = (id) => {
+    if (id.startsWith("guest-")) {
+      const idx = parseInt(id.split("-")[1], 10);
+      return form.guests[idx] || "Invitado";
+    }
+    const member = clubMembers.find((m) => m.id === id);
+    return member?.name || "Jugador";
   };
 
   // -----------------------------
-  // Cargar club activo del usuario
+  // Cargar club activo
   // -----------------------------
   useEffect(() => {
     const loadActiveClub = async () => {
@@ -66,7 +103,6 @@ export default function Torneos() {
       }
 
       try {
-        // 1) User -> activeClubId
         const userRef = doc(db, "users", userId);
         const userSnap = await getDoc(userRef);
 
@@ -84,7 +120,6 @@ export default function Torneos() {
           return;
         }
 
-        // 2) Club info
         const clubRef = doc(db, "clubs", clubId);
         const clubSnap = await getDoc(clubRef);
 
@@ -96,7 +131,6 @@ export default function Torneos() {
         const clubData = { id: clubSnap.id, ...clubSnap.data() };
         setActiveClub(clubData);
 
-        // 3) Miembros del club (colección users)
         if (Array.isArray(clubData.members) && clubData.members.length > 0) {
           const membersData = [];
           for (const memberId of clubData.members) {
@@ -132,7 +166,7 @@ export default function Torneos() {
   }, [userId]);
 
   // -----------------------------
-  // Escuchar torneos del club activo
+  // Escuchar torneos del club
   // -----------------------------
   useEffect(() => {
     if (!activeClubId) return;
@@ -154,9 +188,7 @@ export default function Torneos() {
           })
         );
       },
-      (err) => {
-        console.error("Error escuchando torneos:", err);
-      }
+      (err) => console.error("Error escuchando torneos:", err)
     );
 
     return () => unsub();
@@ -172,17 +204,58 @@ export default function Torneos() {
     [tournaments]
   );
 
+  // Agrupar completados por mes/año
+  const completedByMonth = useMemo(() => {
+    if (completedTournaments.length === 0) return [];
+
+    const groups = {};
+
+    completedTournaments.forEach((t) => {
+      const rawDate = t.completedAt || t.createdAt || null;
+      let key = "sin-fecha";
+      let label = "Sin fecha";
+
+      if (rawDate) {
+        const d = new Date(rawDate);
+        if (!isNaN(d.getTime())) {
+          const year = d.getFullYear();
+          const month = d.getMonth();
+          key = `${year}-${String(month + 1).padStart(2, "0")}`;
+          label = `${MONTH_NAMES_ES[month]} ${year}`;
+        }
+      }
+
+      if (!groups[key]) {
+        groups[key] = { label, items: [] };
+      }
+      groups[key].items.push(t);
+    });
+
+    return Object.entries(groups)
+      .sort((a, b) => {
+        if (a[0] === "sin-fecha") return 1;
+        if (b[0] === "sin-fecha") return -1;
+        return b[0].localeCompare(a[0]);
+      })
+      .map(([key, value]) => ({ key, ...value }));
+  }, [completedTournaments]);
+
   // -----------------------------
-  // Selección de jugadores del club
+  // Selección de jugadores
   // -----------------------------
   const togglePlayer = (memberId) => {
     setForm((prev) => {
       const isSelected = prev.players.includes(memberId);
+      const updatedPlayers = isSelected
+        ? prev.players.filter((id) => id !== memberId)
+        : [...prev.players, memberId];
+
+      setPreviewMatches([]);
+      setShowPreview(false);
+
       return {
         ...prev,
-        players: isSelected
-          ? prev.players.filter((id) => id !== memberId)
-          : [...prev.players, memberId],
+        players: updatedPlayers,
       };
     });
   };
@@ -201,37 +274,42 @@ export default function Torneos() {
       guestName: "",
     }));
     setErrorMsg("");
+    setPreviewMatches([]);
+    setShowPreview(false);
   };
 
   const removeGuest = (name) => {
-    setForm((prev) => ({
-      ...prev,
-      guests: prev.guests.filter((g) => g !== name),
-    }));
+    setForm((prev) => {
+      const newGuests = prev.guests.filter((g) => g !== name);
+      return {
+        ...prev,
+        guests: newGuests,
+      };
+    });
+    setPreviewMatches([]);
+    setShowPreview(false);
   };
 
   // -----------------------------
-  // Generador de partidos con rotación y variedad
+  // Generación de partidos con aleatoriedad
   // -----------------------------
   const generateInitialMatches = (playerIds, desiredMatchCount) => {
     if (!Array.isArray(playerIds) || playerIds.length < 4) return [];
 
-    // El slider manda: número exacto de partidos (mínimo 1)
     const matchCount = Math.max(1, desiredMatchCount || 1);
 
-    // Stats para fairness (quién ha jugado menos / hace más tiempo)
+    // Aleatorizar orden base para que "recalcular" cambie emparejamientos
+    const players = [...playerIds].sort(() => Math.random() - 0.5);
+
     const stats = {};
-    playerIds.forEach((id) => {
-      stats[id] = { matches: 0, last: -1 }; // last = índice del último partido jugado
+    players.forEach((id) => {
+      stats[id] = { matches: 0, last: -1 };
     });
 
-    // Contadores para variedad de compañeros / rivales
-    const teammateCounts = {}; // pareja en el mismo equipo
-    const opponentCounts = {}; // pareja en equipos opuestos
+    const teammateCounts = {};
+    const opponentCounts = {};
 
-    const pairKey = (a, b) => {
-      return a < b ? `${a}|${b}` : `${b}|${a}`;
-    };
+    const pairKey = (a, b) => (a < b ? `${a}|${b}` : `${b}|${a}`);
 
     const addTeammates = (team) => {
       for (let i = 0; i < team.length; i++) {
@@ -254,12 +332,11 @@ export default function Torneos() {
     const costTeams = (team1, team2) => {
       let cost = 0;
 
-      // Penalizar repetir compañeros
       const addTeamCost = (team) => {
         for (let i = 0; i < team.length; i++) {
           for (let j = i + 1; j < team.length; j++) {
             const key = pairKey(team[i], team[j]);
-            cost += (teammateCounts[key] || 0) * 3; // peso más alto
+            cost += (teammateCounts[key] || 0) * 3;
           }
         }
       };
@@ -267,7 +344,6 @@ export default function Torneos() {
       addTeamCost(team1);
       addTeamCost(team2);
 
-      // Penalizar repetir rivales
       for (const a of team1) {
         for (const b of team2) {
           const key = pairKey(a, b);
@@ -281,10 +357,7 @@ export default function Torneos() {
     const matches = [];
 
     for (let matchIndex = 0; matchIndex < matchCount; matchIndex++) {
-      // Ordenar jugadores por:
-      // 1) menos partidos jugados
-      // 2) jugaron hace más tiempo (last más pequeño)
-      const sorted = [...playerIds].sort((a, b) => {
+      const sorted = [...players].sort((a, b) => {
         const sa = stats[a];
         const sb = stats[b];
         if (sa.matches !== sb.matches) return sa.matches - sb.matches;
@@ -302,7 +375,6 @@ export default function Torneos() {
         { team1: [p1, p4], team2: [p2, p3] },
       ];
 
-      // Elegir la combinación con menor "costo" de repetición
       let bestOpt = options[0];
       let bestCost = costTeams(options[0].team1, options[0].team2);
 
@@ -326,7 +398,6 @@ export default function Torneos() {
         createdAt: new Date().toISOString(),
       });
 
-      // Actualizar stats y contadores
       for (const pid of [...bestOpt.team1, ...bestOpt.team2]) {
         stats[pid].matches++;
         stats[pid].last = matchIndex;
@@ -340,10 +411,42 @@ export default function Torneos() {
   };
 
   // -----------------------------
-  // Crear torneo
+  // Vista previa -> abre modal
   // -----------------------------
-  const handleCreateTournament = async (e) => {
-    e.preventDefault();
+  const handleGeneratePreview = () => {
+    resetMessages();
+
+    const totalPlayers = form.players.length + form.guests.length;
+    if (totalPlayers < 4) {
+      setErrorMsg("Se necesitan al menos 4 jugadores para generar el torneo.");
+      setShowPreview(false);
+      setPreviewMatches([]);
+      return;
+    }
+
+    const allPlayerIds = getAllPlayerIds();
+    const matches = generateInitialMatches(
+      allPlayerIds,
+      Number(form.matchCount) || 8
+    );
+
+    if (!matches || matches.length === 0) {
+      setErrorMsg(
+        "No se pudieron generar partidos, revisa la cantidad de jugadores."
+      );
+      setShowPreview(false);
+      setPreviewMatches([]);
+      return;
+    }
+
+    setPreviewMatches(matches);
+    setShowPreview(true); // <- aquí se abre el modal
+  };
+
+  // -----------------------------
+  // Crear torneo (desde botón del modal)
+  // -----------------------------
+  const handleCreateTournament = async () => {
     resetMessages();
 
     if (!userId) {
@@ -364,19 +467,15 @@ export default function Torneos() {
     setSaving(true);
 
     try {
-      // jugadores para partidos: usuarios + invitados
-      const allPlayerIds = [
-        ...form.players,
-        ...form.guests.map((_, idx) => `guest-${idx}`),
-      ];
+      const allPlayerIds = getAllPlayerIds();
+      const matches =
+        showPreview && previewMatches.length > 0
+          ? previewMatches
+          : generateInitialMatches(
+              allPlayerIds,
+              Number(form.matchCount) || 8
+            );
 
-      // Generar exactamente la cantidad de partidos elegida en el slider
-      const matches = generateInitialMatches(
-        allPlayerIds,
-        Number(form.matchCount) || 8
-      );
-
-      // Nombre del torneo (único por día y club)
       let finalName = form.name.trim();
       if (!finalName) {
         const baseName = `Torneo ${
@@ -404,13 +503,13 @@ export default function Torneos() {
         createdBy: userId,
         createdAt: new Date().toISOString(),
         status: "active",
-        players: form.players, // ids de user
-        guestPlayers: form.guests, // nombres
+        players: form.players,
+        guestPlayers: form.guests,
         matches,
-        maxCourts: form.courts, // 👈 número de canchas simultáneas (1 o 2)
+        maxCourts: form.courts,
       };
 
-      await addDoc(collection(db, "tournaments"), payload);
+      const docRef = await addDoc(collection(db, "tournaments"), payload);
 
       setForm({
         name: "",
@@ -420,8 +519,13 @@ export default function Torneos() {
         matchCount: 8,
         courts: 1,
       });
+      setPreviewMatches([]);
+      setShowPreview(false);
       setShowCreate(false);
       setSuccessMsg("Torneo creado correctamente.");
+
+      // 👉 Ir directo al torneo recién creado
+      navigate(`/torneos/${docRef.id}`);
     } catch (err) {
       console.error("Error creando torneo:", err);
       setErrorMsg("No se pudo crear el torneo.");
@@ -439,18 +543,15 @@ export default function Torneos() {
     return base + guests;
   };
 
-  const getMatchesCount = (t) => {
-    return Array.isArray(t.matches) ? t.matches.length : 0;
-  };
+  const getMatchesCount = (t) =>
+    Array.isArray(t.matches) ? t.matches.length : 0;
 
-  const getPendingCount = (t) => {
-    if (!Array.isArray(t.matches)) return 0;
-    return t.matches.filter((m) => m.status === "pending").length;
-  };
+  const getPendingCount = (t) =>
+    Array.isArray(t.matches)
+      ? t.matches.filter((m) => m.status === "pending").length
+      : 0;
 
-  const getCourtsCount = (t) => {
-    return t.maxCourts || t.courts || 1;
-  };
+  const getCourtsCount = (t) => t.maxCourts || t.courts || 1;
 
   const totalPlayersForm = form.players.length + form.guests.length || 0;
   const approxMatchesPerPlayer =
@@ -458,9 +559,6 @@ export default function Torneos() {
       ? ((form.matchCount * 4) / totalPlayersForm).toFixed(1)
       : "0.0";
 
-  // -----------------------------
-  // Render
-  // -----------------------------
   if (loading) {
     return (
       <div
@@ -478,6 +576,19 @@ export default function Torneos() {
 
   const hasActiveClub = !!activeClubId;
 
+  // Nombre "preview" que verás en el modal
+  const buildPreviewName = () => {
+    if (form.name.trim()) return form.name.trim();
+    const baseName = `Torneo ${
+      activeClub?.name || "Padel"
+    } - ${new Date().toLocaleDateString("es-MX")}`;
+    return `${baseName} (nombre automático)`;
+  };
+
+  const allPreviewPlayers = getAllPlayerIds().map((id) =>
+    getPlayerDisplayName(id)
+  );
+
   return (
     <div
       style={{
@@ -487,7 +598,7 @@ export default function Torneos() {
         paddingBottom: "0.75rem",
       }}
     >
-      {/* HEADER / INTRO */}
+      {/* HEADER */}
       <section
         style={{
           borderRadius: "1.2rem",
@@ -634,7 +745,7 @@ export default function Torneos() {
         )}
       </section>
 
-      {/* FORMULARIO CREAR TORNEO */}
+      {/* FORM CREAR TORNEO */}
       {showCreate && hasActiveClub && (
         <section className="card">
           <h2
@@ -648,7 +759,10 @@ export default function Torneos() {
           </h2>
 
           <form
-            onSubmit={handleCreateTournament}
+            onSubmit={(e) => {
+              e.preventDefault();
+              handleGeneratePreview();
+            }}
             style={{
               display: "flex",
               flexDirection: "column",
@@ -696,7 +810,7 @@ export default function Torneos() {
               </p>
             </div>
 
-            {/* Slider número de partidos */}
+            {/* Slider partidos */}
             <div>
               <label
                 style={{
@@ -737,22 +851,9 @@ export default function Torneos() {
                   Aprox. {approxMatchesPerPlayer} partidos por jugador
                 </span>
               </div>
-
-              <p
-                style={{
-                  margin: 0,
-                  marginTop: "0.2rem",
-                  fontSize: "0.7rem",
-                  color: "var(--muted)",
-                }}
-              >
-                Los partidos se emparejan automáticamente 2 vs 2, priorizando a
-                los que llevan más tiempo sin jugar y variando compañeros y
-                rivales.
-              </p>
             </div>
 
-            {/* Número de canchas simultáneas */}
+            {/* Canchas */}
             <div>
               <label
                 style={{
@@ -785,7 +886,7 @@ export default function Torneos() {
                           : "1px solid var(--border)",
                         padding: "0.4rem 0.5rem",
                         background: active ? "var(--accent-soft)" : "var(--bg)",
-                        color: active ? "var(--fg)" : "var(--muted)",
+                        color: active ? "var(--accent)" : "var(--muted)",
                         fontSize: "0.8rem",
                         cursor: "pointer",
                         display: "flex",
@@ -804,21 +905,9 @@ export default function Torneos() {
                   );
                 })}
               </div>
-              <p
-                style={{
-                  margin: 0,
-                  marginTop: "0.25rem",
-                  fontSize: "0.7rem",
-                  color: "var(--muted)",
-                }}
-              >
-                Puedes llevar partidos en una o dos canchas en paralelo. En
-                <strong> Jugar torneo</strong> podrás verlos organizados por
-                cancha.
-              </p>
             </div>
 
-            {/* Jugadores del club */}
+            {/* Jugadores club */}
             <div>
               <label
                 style={{
@@ -862,7 +951,9 @@ export default function Torneos() {
                             ? "1px solid var(--accent)"
                             : "1px solid var(--border)",
                           padding: "0.3rem 0.55rem",
-                          background: selected ? "var(--accent-soft)" : "var(--bg)",
+                          background: selected
+                            ? "var(--accent-soft)"
+                            : "var(--bg)",
                           color: selected ? "var(--accent)" : "var(--fg)",
                           fontSize: "0.75rem",
                           display: "flex",
@@ -1046,7 +1137,7 @@ export default function Torneos() {
               </p>
             </div>
 
-            {/* Resumen jugadores */}
+            {/* Resumen rápido */}
             <div
               style={{
                 borderRadius: "0.8rem",
@@ -1056,45 +1147,61 @@ export default function Torneos() {
                 fontSize: "0.78rem",
               }}
             >
-              Total de jugadores para el torneo:{" "}
+              Total de jugadores:{" "}
               <strong>
                 {totalPlayersForm >= 4
                   ? totalPlayersForm
                   : `${totalPlayersForm} (mínimo 4)`}
               </strong>
+              <br />
+              Partidos a crear: <strong>{form.matchCount}</strong> • Aprox.{" "}
+              <strong>{approxMatchesPerPlayer}</strong> partidos por jugador.
             </div>
 
-            {/* Botones */}
+            {/* Botones finales */}
             <div
               style={{
                 display: "flex",
-                gap: "0.5rem",
+                flexDirection: "column",
+                gap: "0.4rem",
                 marginTop: "0.3rem",
               }}
             >
               <button
-                type="submit"
+                type="button"
+                onClick={handleGeneratePreview}
                 disabled={saving}
                 style={{
-                  flex: 1,
+                  width: "100%",
                   borderRadius: "0.9rem",
-                  border: "none",
+                  border: "1px solid var(--border)",
                   padding: "0.55rem 0.7rem",
-                  background:
-                    "linear-gradient(135deg, var(--accent), rgba(59,130,246,0.9))",
-                  color: "#ffffff",
+                  background: "var(--bg)",
                   fontSize: "0.85rem",
-                  fontWeight: 600,
+                  color: "var(--fg)",
+                  fontWeight: 500,
                   cursor: saving ? "default" : "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: "0.3rem",
                 }}
               >
-                {saving ? "Creando..." : "Crear torneo"}
+                <Icon name="eye" size={14} color="var(--muted)" />
+                Generar vista previa
               </button>
+
               <button
                 type="button"
-                onClick={() => setShowCreate(false)}
+                onClick={() => {
+                  setShowCreate(false);
+                  setPreviewMatches([]);
+                  setShowPreview(false);
+                  resetMessages();
+                }}
                 disabled={saving}
                 style={{
+                  width: "100%",
                   borderRadius: "0.9rem",
                   border: "1px solid var(--border)",
                   padding: "0.55rem 0.7rem",
@@ -1202,9 +1309,8 @@ export default function Torneos() {
                       }}
                     >
                       {getTournamentPlayersCount(t)} jugadores •{" "}
-                      {getMatchesCount(t)} partidos •{" "}
-                      {getPendingCount(t)} pendientes •{" "}
-                      {getCourtsCount(t)}{" "}
+                      {getMatchesCount(t)} partidos •{` `}
+                      {getPendingCount(t)} pendientes • {getCourtsCount(t)}{" "}
                       {getCourtsCount(t) === 1 ? "cancha" : "canchas"}
                     </p>
                   </div>
@@ -1240,7 +1346,7 @@ export default function Torneos() {
         )}
       </section>
 
-      {/* TORNEOS COMPLETADOS */}
+      {/* TORNEOS COMPLETADOS - RESUMEN + MODAL */}
       <section>
         <h2
           style={{
@@ -1265,85 +1371,512 @@ export default function Torneos() {
         ) : (
           <div
             style={{
+              borderRadius: "0.9rem",
+              border: "1px solid var(--border)",
+              padding: "0.6rem 0.7rem",
+              background: "var(--bg-elevated)",
               display: "flex",
-              flexDirection: "column",
+              alignItems: "center",
               gap: "0.6rem",
             }}
           >
-            {completedTournaments.map((t) => (
-              <article
-                key={t.id}
-                onClick={() => navigate(`/torneos/${t.id}`)}
+            <div
+              style={{
+                width: 26,
+                height: 26,
+                borderRadius: "0.8rem",
+                background:
+                  "linear-gradient(135deg, rgba(16,185,129,0.95), rgba(22,163,74,0.9))",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                flexShrink: 0,
+              }}
+            >
+              <Icon name="check" size={16} color="#ffffff" />
+            </div>
+            <div
+              style={{
+                flex: 1,
+                minWidth: 0,
+              }}
+            >
+              <p
                 style={{
-                  borderRadius: "0.9rem",
-                  border: "1px solid var(--border)",
-                  padding: "0.6rem 0.7rem",
-                  background: "var(--bg)",
-                  cursor: "pointer",
-                  opacity: 0.9,
+                  margin: 0,
+                  fontSize: "0.83rem",
+                  fontWeight: 600,
                 }}
               >
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "0.55rem",
-                  }}
-                >
-                  <div
-                    style={{
-                      width: 26,
-                      height: 26,
-                      borderRadius: "0.8rem",
-                      background:
-                        "linear-gradient(135deg, rgba(16,185,129,0.95), rgba(22,163,74,0.9))",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      flexShrink: 0,
-                    }}
-                  >
-                    <Icon name="check" size={16} color="#ffffff" />
-                  </div>
-                  <div
-                    style={{
-                      flex: 1,
-                      minWidth: 0,
-                    }}
-                  >
-                    <p
-                      style={{
-                        margin: 0,
-                        fontSize: "0.88rem",
-                        fontWeight: 600,
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      {t.name}
-                    </p>
-                    <p
-                      style={{
-                        margin: 0,
-                        marginTop: "0.15rem",
-                        fontSize: "0.75rem",
-                        color: "var(--muted)",
-                      }}
-                    >
-                      {getTournamentPlayersCount(t)} jugadores •{" "}
-                      {getMatchesCount(t)} partidos •{" "}
-                      {getCourtsCount(t)}{" "}
-                      {getCourtsCount(t) === 1 ? "cancha" : "canchas"}
-                    </p>
-                  </div>
-                  <Icon name="chevron-right" size={16} color="var(--muted)" />
-                </div>
-              </article>
-            ))}
+                Historial de torneos
+              </p>
+              <p
+                style={{
+                  margin: 0,
+                  marginTop: "0.15rem",
+                  fontSize: "0.75rem",
+                  color: "var(--muted)",
+                }}
+              >
+                Tienes {completedTournaments.length} torneos completados.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowCompletedModal(true)}
+              style={{
+                borderRadius: "999px",
+                border: "1px solid var(--border)",
+                padding: "0.35rem 0.7rem",
+                background: "var(--bg)",
+                fontSize: "0.78rem",
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                gap: "0.25rem",
+              }}
+            >
+              <Icon name="eye" size={14} color="var(--muted)" />
+              Ver torneos
+            </button>
           </div>
         )}
       </section>
+
+      {/* MODAL TORNEOS COMPLETADOS */}
+      {showCompletedModal && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.45)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 40,
+          }}
+        >
+          <div
+            style={{
+              width: "100%",
+              maxWidth: 480,
+              maxHeight: "80vh",
+              margin: "0 1rem",
+              borderRadius: "1rem",
+              background: "var(--bg)",
+              border: "1px solid var(--border)",
+              padding: "0.8rem 0.9rem",
+              display: "flex",
+              flexDirection: "column",
+              gap: "0.6rem",
+              overflowY: "auto",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "0.5rem",
+              }}
+            >
+              <div
+                style={{
+                  width: 28,
+                  height: 28,
+                  borderRadius: "0.8rem",
+                  background:
+                    "linear-gradient(135deg, rgba(16,185,129,0.95), rgba(22,163,74,0.9))",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  flexShrink: 0,
+                }}
+              >
+                <Icon name="check" size={16} color="#ffffff" />
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <h3
+                  style={{
+                    margin: 0,
+                    fontSize: "0.9rem",
+                  }}
+                >
+                  Torneos completados
+                </h3>
+                <p
+                  style={{
+                    margin: 0,
+                    marginTop: "0.15rem",
+                    fontSize: "0.75rem",
+                    color: "var(--muted)",
+                  }}
+                >
+                  Agrupados por mes y año.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowCompletedModal(false)}
+                style={{
+                  border: "none",
+                  background: "transparent",
+                  color: "var(--muted)",
+                  cursor: "pointer",
+                  fontSize: "1.1rem",
+                }}
+              >
+                ×
+              </button>
+            </div>
+
+            {completedByMonth.length === 0 ? (
+              <p
+                style={{
+                  margin: 0,
+                  fontSize: "0.8rem",
+                  color: "var(--muted)",
+                }}
+              >
+                No hay torneos completados aún.
+              </p>
+            ) : (
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "0.75rem",
+                  marginTop: "0.2rem",
+                }}
+              >
+                {completedByMonth.map((group) => (
+                  <div key={group.key}>
+                    <h4
+                      style={{
+                        margin: 0,
+                        marginBottom: "0.25rem",
+                        fontSize: "0.85rem",
+                        color: "var(--muted)",
+                      }}
+                    >
+                      {group.label}
+                    </h4>
+                    <div
+                      style={{
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: "0.45rem",
+                      }}
+                    >
+                      {group.items.map((t) => (
+                        <article
+                          key={t.id}
+                          onClick={() => {
+                            setShowCompletedModal(false);
+                            navigate(`/torneos/${t.id}`);
+                          }}
+                          style={{
+                            borderRadius: "0.9rem",
+                            border: "1px solid var(--border)",
+                            padding: "0.6rem 0.7rem",
+                            background: "var(--bg-elevated)",
+                            cursor: "pointer",
+                          }}
+                        >
+                          <div
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: "0.55rem",
+                            }}
+                          >
+                            <div
+                              style={{
+                                width: 24,
+                                height: 24,
+                                borderRadius: "0.7rem",
+                                background:
+                                  "linear-gradient(135deg, rgba(16,185,129,0.95), rgba(22,163,74,0.9))",
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                flexShrink: 0,
+                              }}
+                            >
+                              <Icon name="trophy" size={15} color="#ffffff" />
+                            </div>
+                            <div
+                              style={{
+                                flex: 1,
+                                minWidth: 0,
+                              }}
+                            >
+                              <p
+                                style={{
+                                  margin: 0,
+                                  fontSize: "0.88rem",
+                                  fontWeight: 600,
+                                  overflow: "hidden",
+                                  textOverflow: "ellipsis",
+                                  whiteSpace: "nowrap",
+                                }}
+                              >
+                                {t.name}
+                              </p>
+                              <p
+                                style={{
+                                  margin: 0,
+                                  marginTop: "0.15rem",
+                                  fontSize: "0.75rem",
+                                  color: "var(--muted)",
+                                }}
+                              >
+                                {getTournamentPlayersCount(t)} jugadores •{" "}
+                                {getMatchesCount(t)} partidos •{" "}
+                                {getCourtsCount(t)}{" "}
+                                {getCourtsCount(t) === 1
+                                  ? "cancha"
+                                  : "canchas"}
+                              </p>
+                            </div>
+                            <Icon
+                              name="chevron-right"
+                              size={16}
+                              color="var(--muted)"
+                            />
+                          </div>
+                        </article>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* MODAL VISTA PREVIA DEL TORNEO */}
+      {showPreview && previewMatches.length > 0 && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.45)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 50,
+          }}
+        >
+          <div
+            style={{
+              width: "100%",
+              maxWidth: 480,
+              maxHeight: "80vh",
+              margin: "0 1rem",
+              borderRadius: "1rem",
+              background: "var(--bg)",
+              border: "1px solid var(--border)",
+              padding: "0.9rem 0.9rem",
+              display: "flex",
+              flexDirection: "column",
+              gap: "0.6rem",
+              overflowY: "auto",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "0.5rem",
+              }}
+            >
+              <div
+                style={{
+                  width: 28,
+                  height: 28,
+                  borderRadius: "0.8rem",
+                  background:
+                    "linear-gradient(135deg, rgba(59,130,246,0.95), rgba(147,51,234,0.9))",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  flexShrink: 0,
+                }}
+              >
+                <Icon name="tournament" size={16} color="#ffffff" />
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <h3
+                  style={{
+                    margin: 0,
+                    fontSize: "0.9rem",
+                  }}
+                >
+                  Vista previa del torneo
+                </h3>
+                <p
+                  style={{
+                    margin: 0,
+                    marginTop: "0.15rem",
+                    fontSize: "0.75rem",
+                    color: "var(--muted)",
+                  }}
+                >
+                  Revisa participantes y emparejamientos antes de crearlo.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowPreview(false)}
+                style={{
+                  border: "none",
+                  background: "transparent",
+                  color: "var(--muted)",
+                  cursor: "pointer",
+                  fontSize: "1.1rem",
+                }}
+              >
+                ×
+              </button>
+            </div>
+
+            <div
+              style={{
+                fontSize: "0.78rem",
+                color: "var(--muted)",
+                borderRadius: "0.8rem",
+                border: "1px solid var(--border)",
+                padding: "0.45rem 0.55rem",
+                background: "var(--bg-elevated)",
+              }}
+            >
+              <div>
+                <strong>Nombre:</strong> {buildPreviewName()}
+              </div>
+              <div style={{ marginTop: "0.25rem" }}>
+                <strong>Participantes:</strong>{" "}
+                {allPreviewPlayers.length === 0
+                  ? "—"
+                  : allPreviewPlayers.join(", ")}
+              </div>
+              <div style={{ marginTop: "0.25rem" }}>
+                <strong>Partidos:</strong> {previewMatches.length}
+              </div>
+            </div>
+
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: "0.3rem",
+                marginTop: "0.1rem",
+              }}
+            >
+              {previewMatches.slice(0, 10).map((m, idx) => {
+                const t1a = getPlayerDisplayName(m.team1[0]);
+                const t1b = getPlayerDisplayName(m.team1[1]);
+                const t2a = getPlayerDisplayName(m.team2[0]);
+                const t2b = getPlayerDisplayName(m.team2[1]);
+
+                return (
+                  <div
+                    key={m.id || idx}
+                    style={{
+                      borderRadius: "0.7rem",
+                      border: "1px solid var(--border)",
+                      padding: "0.35rem 0.45rem",
+                      background: "var(--bg-elevated)",
+                      fontSize: "0.75rem",
+                    }}
+                  >
+                    <span
+                      style={{
+                        fontWeight: 600,
+                        marginRight: "0.25rem",
+                      }}
+                    >
+                      Partido {idx + 1}:
+                    </span>
+                    <span>
+                      {t1a} &amp; {t1b} vs {t2a} &amp; {t2b}
+                    </span>
+                  </div>
+                );
+              })}
+              {previewMatches.length > 10 && (
+                <p
+                  style={{
+                    margin: 0,
+                    marginTop: "0.15rem",
+                    fontSize: "0.72rem",
+                    color: "var(--muted)",
+                  }}
+                >
+                  Y {previewMatches.length - 10} partidos más...
+                </p>
+              )}
+            </div>
+
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: "0.4rem",
+                marginTop: "0.4rem",
+              }}
+            >
+              <button
+                type="button"
+                onClick={handleGeneratePreview}
+                disabled={saving}
+                style={{
+                  width: "100%",
+                  borderRadius: "0.9rem",
+                  border: "1px solid var(--border)",
+                  padding: "0.5rem 0.7rem",
+                  background: "var(--bg)",
+                  fontSize: "0.83rem",
+                  color: "var(--fg)",
+                  cursor: saving ? "default" : "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: "0.3rem",
+                }}
+              >
+                <Icon name="refresh" size={14} color="var(--muted)" />
+                Recalcular emparejamientos
+              </button>
+
+              <button
+                type="button"
+                onClick={handleCreateTournament}
+                disabled={saving}
+                style={{
+                  width: "100%",
+                  borderRadius: "0.9rem",
+                  border: "none",
+                  padding: "0.55rem 0.7rem",
+                  background:
+                    "linear-gradient(135deg, var(--accent), rgba(59,130,246,0.9))",
+                  color: "#ffffff",
+                  fontSize: "0.85rem",
+                  fontWeight: 600,
+                  cursor: saving ? "default" : "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: "0.3rem",
+                }}
+              >
+                <Icon name="check" size={14} color="#ffffff" />
+                Todo bien, crear torneo
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <style>{`
         .card {
