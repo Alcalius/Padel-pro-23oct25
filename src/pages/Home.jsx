@@ -170,6 +170,12 @@ export default function Home() {
     winRate: 0,
     tournamentsPlayed: 0,
   });
+
+  const computedWinRate =
+    stats.totalMatches > 0
+      ? Math.round((stats.totalWins / stats.totalMatches) * 100)
+      : 0;
+
   const [userRecentMatches, setUserRecentMatches] = useState([]);
 
   const [clubMembers, setClubMembers] = useState([]);
@@ -183,6 +189,10 @@ export default function Home() {
   // NUEVO: estado para modales
   const [showRankingModal, setShowRankingModal] = useState(false);
   const [showMemberDetailModal, setShowMemberDetailModal] = useState(false);
+
+  // NUEVO: animaciones
+  const [plBarValue, setPlBarValue] = useState(0);
+  const [animateTop3, setAnimateTop3] = useState(false);
 
   // --------------------------
   // Cargar datos de usuario
@@ -221,9 +231,7 @@ export default function Home() {
           : [];
 
       const sortedRecent = Array.isArray(recent)
-        ? [...recent].sort(
-            (a, b) => getMatchDateMillis(b) - getMatchDateMillis(a)
-          )
+        ? [...recent].sort((a, b) => getMatchDateMillis(b) - getMatchDateMillis(a))
         : [];
 
       setUserRecentMatches(sortedRecent);
@@ -449,6 +457,28 @@ export default function Home() {
   const pl = userData?.leaguePoints || 0;
   const rankInfo = getRankInfoFromData(userData?.rank, pl);
 
+  // ANIMACIÓN: barra de PL
+  useEffect(() => {
+    const target = Math.max(0, Math.min(100, pl % 100));
+    setPlBarValue(0);
+    const timeout = setTimeout(() => {
+      setPlBarValue(target);
+    }, 80);
+    return () => clearTimeout(timeout);
+  }, [pl]);
+
+  // ANIMACIÓN: efecto pop en top 3
+  useEffect(() => {
+    if (top3Members.length === 0) {
+      setAnimateTop3(false);
+      return;
+    }
+    const timeout = setTimeout(() => {
+      setAnimateTop3(true);
+    }, 80);
+    return () => clearTimeout(timeout);
+  }, [top3Members]);
+
   // --------------------------
   // Render
   // --------------------------
@@ -645,10 +675,11 @@ export default function Home() {
                 >
                   <div
                     style={{
-                      width: `${Math.max(0, Math.min(100, pl % 100))}%`,
+                      width: `${plBarValue}%`,
                       height: "100%",
                       background:
                         "linear-gradient(90deg, rgba(59,130,246,1), rgba(56,189,248,1))",
+                      transition: "width 0.6s ease-out",
                     }}
                   />
                 </div>
@@ -687,11 +718,11 @@ export default function Home() {
             <StatCard label="Victorias" value={stats.totalWins} />
             <StatCard
               label="Winrate"
-              value={`${stats.winRate ? stats.winRate.toFixed(0) : 0}%`}
+              value={`${computedWinRate}%`}
             />
             <StatCard
               label="Torneos jugados"
-              value={stats.tournamentsPlayed}
+              value={stats.tournamentsPlayed || completedTournaments.length}
             />
           </div>
         </section>
@@ -782,6 +813,15 @@ export default function Home() {
                         flexDirection: "column",
                         alignItems: "center",
                         gap: "0.35rem",
+                        opacity: animateTop3 ? 1 : 0,
+                        transform: animateTop3
+                          ? "translateY(0) scale(1)"
+                          : "translateY(8px) scale(0.85)",
+                        transition:
+                          "opacity 0.4s ease-out, transform 0.4s ease-out",
+                        transitionDelay: animateTop3
+                          ? `${index * 80}ms`
+                          : "0ms",
                       }}
                     >
                       <div
@@ -1004,7 +1044,6 @@ export default function Home() {
             </p>
           )}
         </section>
-
       </div>
 
       {/* MODAL: RANKING COMPLETO DEL CLUB (solo lista) */}
@@ -1014,7 +1053,7 @@ export default function Home() {
           style={{
             position: "fixed",
             inset: 0,
-            background: "rgba(0,0,0,0.9)", // 👈 fondo oscuro, ya no transparente
+            background: "rgba(0,0,0,0.9)",
             display: "flex",
             justifyContent: "center",
             alignItems: "flex-end",
@@ -1550,12 +1589,11 @@ export default function Home() {
                     <p
                       style={{
                         margin: 0,
-                        fontSize: "0.78rem",
+                        fontSize: "0.8rem",
                         color: "var(--muted)",
                       }}
                     >
-                      Este jugador aún no tiene partidos recientes
-                      registrados con PL.
+                      Aún no hay partidos recientes para este jugador.
                     </p>
                   )}
                 </div>
@@ -1568,35 +1606,38 @@ export default function Home() {
   );
 }
 
+// --- Helper components ---
+
 function StatCard({ label, value }) {
   return (
-    <article
+    <div
       style={{
         borderRadius: "0.9rem",
         border: "1px solid var(--border)",
-        padding: "0.7rem 0.8rem",
         background: "var(--bg-elevated)",
+        padding: "0.55rem 0.6rem",
+        display: "flex",
+        flexDirection: "column",
+        gap: "0.2rem",
       }}
     >
-      <p
+      <span
         style={{
-          margin: 0,
           fontSize: "0.78rem",
           color: "var(--muted)",
         }}
       >
         {label}
-      </p>
-      <p
+      </span>
+      <span
         style={{
-          margin: "0.15rem 0 0",
-          fontSize: "1rem",
+          fontSize: "0.95rem",
           fontWeight: 600,
         }}
       >
         {value}
-      </p>
-    </article>
+      </span>
+    </div>
   );
 }
 
@@ -1606,28 +1647,29 @@ function MiniStat({ label, value }) {
       style={{
         borderRadius: "0.7rem",
         border: "1px solid var(--border)",
+        background: "var(--bg-elevated)",
         padding: "0.4rem 0.45rem",
-        background: "var(--bg)",
+        display: "flex",
+        flexDirection: "column",
+        gap: "0.1rem",
       }}
     >
-      <p
+      <span
         style={{
-          margin: 0,
-          fontSize: "0.72rem",
+          fontSize: "0.7rem",
           color: "var(--muted)",
         }}
       >
         {label}
-      </p>
-      <p
+      </span>
+      <span
         style={{
-          margin: "0.1rem 0 0",
-          fontSize: "0.86rem",
+          fontSize: "0.9rem",
           fontWeight: 600,
         }}
       >
         {value}
-      </p>
+      </span>
     </div>
   );
 }

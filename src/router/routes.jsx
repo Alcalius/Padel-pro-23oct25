@@ -13,6 +13,8 @@ import Torneos from "../pages/Torneos";
 import TorneoDetalle from "../pages/TorneoDetalle";
 import TorneoJugar from "../pages/TorneoJugar";
 import RankingInfo from "../pages/RankingInfo";
+import FinalJugar from "../pages/FinalJugar";
+
 
 const router = createBrowserRouter([
   {
@@ -26,6 +28,7 @@ const router = createBrowserRouter([
       { path: "torneos", element: <Torneos /> },
       { path: "torneos/:id", element: <TorneoDetalle /> },
       { path: "torneos/:id/jugar", element: <TorneoJugar /> },
+      { path: "torneos/:id/final", element: <FinalJugar /> },
 
       // 👉 Coincide con navigate("/rankinginfo")
       { path: "rankinginfo", element: <RankingInfo /> },

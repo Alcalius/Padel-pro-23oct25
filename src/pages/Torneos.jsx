@@ -1426,17 +1426,21 @@ export default function Torneos() {
               onClick={() => setShowCompletedModal(true)}
               style={{
                 borderRadius: "999px",
-                border: "1px solid var(--border)",
-                padding: "0.35rem 0.7rem",
-                background: "var(--bg)",
+                border: "none",
+                padding: "0.38rem 0.85rem",
+                background:
+                  "linear-gradient(135deg, var(--accent), rgba(59,130,246,0.9))",
+                color: "#ffffff",
                 fontSize: "0.78rem",
+                fontWeight: 600,
                 cursor: "pointer",
                 display: "flex",
                 alignItems: "center",
-                gap: "0.25rem",
+                gap: "0.35rem",
+                boxShadow: "0 0 0 1px rgba(15,23,42,0.12)",
               }}
             >
-              <Icon name="eye" size={14} color="var(--muted)" />
+              <Icon name="eye" size={14} color="#ffffff" />
               Ver torneos
             </button>
           </div>

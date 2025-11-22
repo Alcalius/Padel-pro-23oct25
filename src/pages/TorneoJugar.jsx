@@ -1,6 +1,6 @@
 // src/pages/TorneoJugar.jsx
-import React, { useEffect, useMemo, useState } from "react";
-import { useParams } from "react-router-dom";
+import React, { useEffect, useState } from "react";
+import { useParams, useNavigate } from "react-router-dom";
 import { doc, getDoc, updateDoc, collection } from "firebase/firestore";
 import { db } from "../firebase/firebase";
 import Icon from "../components/common/Icon";
@@ -8,47 +8,143 @@ import { applyMatchPLChanges, getDivisionIndex } from "../utils/ranking";
 
 const TOTAL_POINTS = 4;
 
+// Helper para armar el mejor matchup con 4 jugadores
+function buildBestTeams(players4, existingTeams, existingMatchups, playersMap) {
+  if (!players4 || players4.length !== 4) {
+    return { team1: [], team2: [], diff: 0 };
+  }
+  const [a, b, c, d] = players4;
+
+  const combos = [
+    { team1: [a, b], team2: [c, d] },
+    { team1: [a, c], team2: [b, d] },
+    { team1: [a, d], team2: [b, c] },
+  ];
+
+  const avgIdx = (team) =>
+    team.reduce(
+      (sum, id) =>
+        sum + getDivisionIndex(playersMap[id]?.rank || "Bronce III"),
+      0
+    ) / team.length;
+
+  const teamKey = (team) => [...team].sort().join("|");
+  const matchupKey = (teamA, teamB) => {
+    const ta = teamKey(teamA);
+    const tb = teamKey(teamB);
+    return ta < tb ? `${ta}::${tb}` : `${tb}::${ta}`;
+  };
+
+  let best = combos[0];
+  let bestCost = Infinity;
+  let bestDiff = 0;
+
+  for (let i = 0; i < combos.length; i++) {
+    const c = combos[i];
+    const t1Idx = avgIdx(c.team1);
+    const t2Idx = avgIdx(c.team2);
+    const fairnessDiff = Math.abs(t1Idx - t2Idx);
+
+    const t1Key = teamKey(c.team1);
+    const t2Key = teamKey(c.team2);
+    const teamPenalty =
+      (existingTeams.has(t1Key) ? 1 : 0) +
+      (existingTeams.has(t2Key) ? 1 : 0);
+
+    const muKey = matchupKey(c.team1, c.team2);
+    const matchupPenalty = existingMatchups.has(muKey) ? 1 : 0;
+
+    const cost = fairnessDiff + teamPenalty * 2 + matchupPenalty * 4;
+
+    if (cost < bestCost) {
+      best = c;
+      bestCost = cost;
+      bestDiff = fairnessDiff;
+    }
+  }
+
+  return { team1: best.team1, team2: best.team2, diff: bestDiff };
+}
+
 export default function TorneoJugar() {
   const { id } = useParams();
+  const navigate = useNavigate();
   const tournamentId = id;
 
   const [loading, setLoading] = useState(true);
   const [savingResult, setSavingResult] = useState(false);
   const [savingNewMatch, setSavingNewMatch] = useState(false);
-  const [completingTournament, setCompletingTournament] = useState(false);
 
   const [tournament, setTournament] = useState(null);
   const [matches, setMatches] = useState([]);
   const [playersMap, setPlayersMap] = useState({});
   const [guestMap, setGuestMap] = useState({});
 
-  const [activeTab, setActiveTab] = useState("partidos"); // "partidos" | "ranking" | "historial"
-  const [activeCourt, setActiveCourt] = useState(1); // 1 ó 2 (según maxCourts)
+  // Marcadores por cancha
+  const [scores, setScores] = useState({
+    1: { team1: 0, team2: 0 },
+    2: { team1: 0, team2: 0 },
+  });
 
-  const [scoreTeam1, setScoreTeam1] = useState(0);
-  const [scoreTeam2, setScoreTeam2] = useState(0);
-
-  // Para partido personalizado
+  // Partido personalizado
   const [showCustom, setShowCustom] = useState(false);
   const [customSelected, setCustomSelected] = useState([]);
-  const [customBalanceLabel, setCustomBalanceLabel] = useState("");
 
-  // Modal de costos
-  const [showCostModal, setShowCostModal] = useState(false);
-  const [courtCostPerHour, setCourtCostPerHour] = useState("");
-  const [hoursCourt1, setHoursCourt1] = useState("");
-  const [hoursCourt2, setHoursCourt2] = useState("");
-  const [costResult, setCostResult] = useState(null);
-
-  // Reacomodar pendientes (manual)
+  // Reacomodar pendientes
   const [reorderingPending, setReorderingPending] = useState(false);
 
+  // Modal conflicto jugadores en dos canchas
+  const [conflictModal, setConflictModal] = useState(null);
+  // conflictModal = { courtIndex, triedMatch, suggestedMatch, conflictPlayers }
+
+  // -----------------------------------
+  // Normalizar nombres largos
+  // -----------------------------------
   const shortName = (fullName) => {
     if (!fullName) return "Jugador";
+
     const trimmed = fullName.trim();
-    const idx = trimmed.indexOf(" ");
-    if (idx === -1) return trimmed;
-    return trimmed.slice(0, idx);
+    if (!trimmed) return "Jugador";
+
+    const parts = trimmed.split(/\s+/);
+
+    // Caso con varias palabras: "Rodrigo Ventura Pérez"
+    if (parts.length > 1) {
+      const first = parts[0];
+      const second = parts[1] && parts[1].length <= 6 ? parts[1] : null;
+
+      let result = second ? `${first} ${second}` : first;
+
+      if (result.length > 16) {
+        result = result.slice(0, 16) + "…";
+      }
+      return result;
+    }
+
+    // Caso de 1 sola palabra
+    return trimmed.length > 12 ? trimmed.slice(0, 12) + "…" : trimmed;
+  };
+
+  const getPlayerDisplay = (pid) => {
+    if (!pid) return { name: "Jugador", avatar: "", isGuest: false };
+
+    if (pid.startsWith("guest-")) {
+      const name = guestMap[pid] || "Invitado";
+      return {
+        name,
+        avatar: "",
+        isGuest: true,
+      };
+    }
+
+    const p = playersMap[pid];
+    if (!p) return { name: "Jugador", avatar: "", isGuest: false };
+
+    return {
+      name: p.name,
+      avatar: p.profilePicture || "",
+      isGuest: false,
+    };
   };
 
   // -----------------------------------
@@ -72,9 +168,11 @@ export default function TorneoJugar() {
 
         const tData = { id: tSnap.id, ...tSnap.data() };
         const tMatches = Array.isArray(tData.matches) ? tData.matches : [];
+
         setTournament(tData);
         setMatches(tMatches);
 
+        // Invitados
         const gMap = {};
         if (Array.isArray(tData.guestPlayers)) {
           tData.guestPlayers.forEach((name, idx) => {
@@ -83,6 +181,7 @@ export default function TorneoJugar() {
         }
         setGuestMap(gMap);
 
+        // Jugadores reales
         const playerIds = Array.isArray(tData.players) ? tData.players : [];
         const map = {};
 
@@ -141,60 +240,16 @@ export default function TorneoJugar() {
     load();
   }, [tournamentId]);
 
-  const getPlayerDisplay = (pid) => {
-    if (!pid) return { name: "Jugador", avatar: "", isGuest: false };
+  // -----------------------------------
+  // Derivados (sin hooks)
+  // -----------------------------------
+  const pendingMatches = matches.filter((m) => m.status === "pending");
 
-    if (pid.startsWith("guest-")) {
-      const name = guestMap[pid] || "Invitado";
-      return {
-        name,
-        avatar: "",
-        isGuest: true,
-      };
-    }
-
-    const p = playersMap[pid];
-    if (!p) {
-      return {
-        name: "Jugador",
-        avatar: "",
-        isGuest: false,
-      };
-    }
-    return {
-      name: p.name,
-      avatar: p.profilePicture || "",
-      isGuest: false,
-    };
-  };
-
-  const pendingMatches = useMemo(
-    () => matches.filter((m) => m.status === "pending"),
-    [matches]
-  );
-
-  const sortedPendingMatches = useMemo(() => {
-    const arr = [...pendingMatches];
-    arr.sort((a, b) => {
-      const da = a.createdAt || "";
-      const db = b.createdAt || "";
-      return da.localeCompare(db);
-    });
-    return arr;
-  }, [pendingMatches]);
-
-  const completedMatches = useMemo(
-    () =>
-      matches
-        .filter((m) => m.status === "completed")
-        .slice()
-        .sort((a, b) => {
-          const da = a.completedAt || a.createdAt || "";
-          const db = b.completedAt || b.createdAt || "";
-          return db.localeCompare(da);
-        }),
-    [matches]
-  );
+  const sortedPendingMatches = [...pendingMatches].sort((a, b) => {
+    const da = a.createdAt || "";
+    const db = b.createdAt || "";
+    return db.localeCompare(da); // más nuevo primero
+  });
 
   const maxCourts =
     tournament?.maxCourts ||
@@ -202,38 +257,20 @@ export default function TorneoJugar() {
     tournament?.activeCourts ||
     1;
 
-  // Partidos asignados a cada cancha (se toman de la cola de pendientes)
   const matchCourt1 = sortedPendingMatches[0] || null;
   const matchCourt2 =
     maxCourts >= 2 ? sortedPendingMatches[1] || null : null;
 
-  // Partido actual (para el marcador) según la cancha activa
-  const currentMatch =
-    activeCourt === 1 ? matchCourt1 : matchCourt2;
+  // Partidos realmente "pendientes" (no en cancha 1/2)
+  const displayPendingMatches = sortedPendingMatches.filter(
+    (m) =>
+      m.id !== (matchCourt1 && matchCourt1.id) &&
+      m.id !== (matchCourt2 && matchCourt2.id)
+  );
 
-  // Sincronizar marcador cuando cambia el partido actual
-  useEffect(() => {
-    if (!currentMatch) {
-      setScoreTeam1(0);
-      setScoreTeam2(0);
-      return;
-    }
-    const s1 =
-      typeof currentMatch.scoreTeam1 === "number"
-        ? currentMatch.scoreTeam1
-        : 0;
-    const s2 =
-      typeof currentMatch.scoreTeam2 === "number"
-        ? currentMatch.scoreTeam2
-        : 0;
-    setScoreTeam1(Math.max(0, Math.min(TOTAL_POINTS, s1)));
-    setScoreTeam2(Math.max(0, Math.min(TOTAL_POINTS, s2)));
-  }, [currentMatch]);
-
-  // Jugadores en espera = todos menos los que están en cancha 1/2
-  const waitingPlayers = useMemo(() => {
-    if (!tournament) return [];
-
+  // Jugadores en espera (no en cancha 1 ni 2)
+  let waitingPlayers = [];
+  if (tournament) {
     const allIds = [
       ...(Array.isArray(tournament.players) ? tournament.players : []),
       ...(Array.isArray(tournament.guestPlayers)
@@ -251,94 +288,95 @@ export default function TorneoJugar() {
       (matchCourt2.team2 || []).forEach((id) => inCourts.add(id));
     }
 
-    return allIds.filter((id) => !inCourts.has(id));
-  }, [tournament, matchCourt1, matchCourt2]);
+    waitingPlayers = allIds.filter((id) => !inCourts.has(id));
+  }
 
-  // Ranking del torneo
-  const tournamentRanking = useMemo(() => {
-    const statsByPlayer = {};
+  const allTournamentPlayers = tournament
+    ? [
+        ...(Array.isArray(tournament.players) ? tournament.players : []),
+        ...(Array.isArray(tournament.guestPlayers)
+          ? tournament.guestPlayers.map((_, idx) => `guest-${idx}`)
+          : []),
+      ]
+    : [];
 
-    completedMatches.forEach((m) => {
-      const t1 = m.team1 || [];
-      const t2 = m.team2 || [];
-      const all = [...t1, ...t2];
+  // -----------------------------------
+  // Sincronizar marcadores cuando cambian partidos en cancha
+  // -----------------------------------
+  useEffect(() => {
+    const clamp = (v) => Math.max(0, Math.min(TOTAL_POINTS, v));
 
+    const newScores = {
+      1: { team1: 0, team2: 0 },
+      2: { team1: 0, team2: 0 },
+    };
+
+    if (matchCourt1) {
       const s1 =
-        typeof m.scoreTeam1 === "number" ? m.scoreTeam1 : null;
+        typeof matchCourt1.scoreTeam1 === "number"
+          ? matchCourt1.scoreTeam1
+          : 0;
       const s2 =
-        typeof m.scoreTeam2 === "number" ? m.scoreTeam2 : null;
+        typeof matchCourt1.scoreTeam2 === "number"
+          ? matchCourt1.scoreTeam2
+          : 0;
+      newScores[1] = { team1: clamp(s1), team2: clamp(s2) };
+    }
 
-      let winner = 0;
-      if (s1 != null && s2 != null) {
-        if (s1 > s2) winner = 1;
-        else if (s2 > s1) winner = 2;
-      }
+    if (matchCourt2) {
+      const s1 =
+        typeof matchCourt2.scoreTeam1 === "number"
+          ? matchCourt2.scoreTeam1
+          : 0;
+      const s2 =
+        typeof matchCourt2.scoreTeam2 === "number"
+          ? matchCourt2.scoreTeam2
+          : 0;
+      newScores[2] = { team1: clamp(s1), team2: clamp(s2) };
+    }
 
-      all.forEach((pid) => {
-        if (!statsByPlayer[pid]) {
-          statsByPlayer[pid] = {
-            id: pid,
-            wins: 0,
-            losses: 0,
-            draws: 0,
-            matches: 0,
-          };
-        }
-        const st = statsByPlayer[pid];
-        st.matches += 1;
-
-        const inTeam1 = t1.includes(pid);
-        if (winner === 0) {
-          st.draws += 1;
-        } else if ((winner === 1 && inTeam1) || (winner === 2 && !inTeam1)) {
-          st.wins += 1;
-        } else {
-          st.losses += 1;
-        }
-      });
-    });
-
-    const arr = Object.values(statsByPlayer);
-
-    arr.sort((a, b) => {
-      if (b.wins !== a.wins) return b.wins - a.wins;
-      if (b.draws !== a.draws) return b.draws - a.draws;
-      if (b.matches !== a.matches) return b.matches - a.matches;
-      return 0;
-    });
-
-    return arr;
-  }, [completedMatches]);
+    setScores(newScores);
+  }, [matchCourt1, matchCourt2]);
 
   // -----------------------------------
   // Marcador (auto llena el rival)
   // -----------------------------------
-  const handleScoreTeam1Change = (value) => {
+  const handleScoreChange = (courtIndex, team, value) => {
     const v = Math.max(0, Math.min(TOTAL_POINTS, value));
-    setScoreTeam1(v);
-    setScoreTeam2(TOTAL_POINTS - v);
+    setScores((prev) => {
+      if (team === 1) {
+        return {
+          ...prev,
+          [courtIndex]: {
+            team1: v,
+            team2: TOTAL_POINTS - v,
+          },
+        };
+      } else {
+        return {
+          ...prev,
+          [courtIndex]: {
+            team1: TOTAL_POINTS - v,
+            team2: v,
+          },
+        };
+      }
+    });
   };
 
-  const handleScoreTeam2Change = (value) => {
-    const v = Math.max(0, Math.min(TOTAL_POINTS, value));
-    setScoreTeam2(v);
-    setScoreTeam1(TOTAL_POINTS - v);
-  };
-
-  const handleMarkDraw = () => {
-    const half = TOTAL_POINTS / 2; // 2
-    setScoreTeam1(half);
-    setScoreTeam2(half);
+  const handleMarkDrawForCourt = (courtIndex) => {
+    const half = TOTAL_POINTS / 2; // 2–2
+    setScores((prev) => ({
+      ...prev,
+      [courtIndex]: { team1: half, team2: half },
+    }));
   };
 
   // -----------------------------------
-  // Guardar marcador
+  // Guardar resultado para una cancha
   // -----------------------------------
-  const handleSaveResult = async () => {
-    if (!currentMatch) return;
-
-    const num1 = scoreTeam1;
-    const num2 = scoreTeam2;
+  const saveMatchResult = async (match, num1, num2) => {
+    if (!match) return;
 
     if (
       num1 == null ||
@@ -366,7 +404,7 @@ export default function TorneoJugar() {
 
     try {
       const updatedMatches = matches.map((m) =>
-        m.id === currentMatch.id
+        m.id === match.id
           ? {
               ...m,
               scoreTeam1: num1,
@@ -377,8 +415,8 @@ export default function TorneoJugar() {
           : m
       );
 
-      const team1 = currentMatch.team1 || [];
-      const team2 = currentMatch.team2 || [];
+      const team1 = match.team1 || [];
+      const team2 = match.team2 || [];
 
       const isRealUser = (id) => !id.startsWith("guest-");
 
@@ -420,7 +458,6 @@ export default function TorneoJugar() {
 
           const resultForPlayer = (() => {
             if (winner === 0) return "draw";
-            const inTeam1 = team1.includes(uid);
             const winningTeam = winner === 1 ? team1 : team2;
             return winningTeam.includes(uid) ? "win" : "loss";
           })();
@@ -498,7 +535,7 @@ export default function TorneoJugar() {
       });
       setPlayersMap(newPlayersMap);
 
-      alert("Marcador guardado y ranking actualizado.");
+      alert("Marcador guardado.");
     } catch (err) {
       console.error("Error guardando resultado:", err);
       alert("No se pudo guardar el resultado.");
@@ -507,41 +544,11 @@ export default function TorneoJugar() {
     }
   };
 
-  // -----------------------------------
-  // Completar torneo
-  // -----------------------------------
-  const handleCompleteTournament = async () => {
-    if (!tournament) return;
-    if (tournament.status === "completed") {
-      alert("Este torneo ya está marcado como completado.");
-      return;
-    }
-
-    const pendingCount = pendingMatches.length;
-    const confirmMsg = pendingCount
-      ? `Aún tienes ${pendingCount} partido(s) pendiente(s).\n\n¿Seguro que quieres marcar el torneo como completado?`
-      : "¿Quieres marcar este torneo como completado?";
-
-    if (!window.confirm(confirmMsg)) return;
-
-    setCompletingTournament(true);
-    try {
-      const tRef = doc(db, "tournaments", tournamentId);
-      const completedAt = new Date().toISOString();
-      await updateDoc(tRef, {
-        status: "completed",
-        completedAt,
-      });
-      setTournament((prev) =>
-        prev ? { ...prev, status: "completed", completedAt } : prev
-      );
-      alert("Torneo marcado como completado.");
-    } catch (err) {
-      console.error("Error completando torneo:", err);
-      alert("No se pudo completar el torneo.");
-    } finally {
-      setCompletingTournament(false);
-    }
+  const handleSaveResultForCourt = async (courtIndex) => {
+    const match = courtIndex === 1 ? matchCourt1 : matchCourt2;
+    if (!match) return;
+    const courtScores = scores[courtIndex] || { team1: 0, team2: 0 };
+    await saveMatchResult(match, courtScores.team1, courtScores.team2);
   };
 
   // -----------------------------------
@@ -571,7 +578,7 @@ export default function TorneoJugar() {
   };
 
   // -----------------------------------
-  // Reacomodar partidos pendientes (manual)
+  // Reacomodar partidos pendientes (cola)
   // -----------------------------------
   const savePendingOrder = async (orderedPendingMatches) => {
     setReorderingPending(true);
@@ -582,7 +589,7 @@ export default function TorneoJugar() {
       orderedPendingMatches.forEach((m, idx) => {
         pendingOrderMap[m.id] = {
           ...m,
-          createdAt: new Date(baseTime + idx).toISOString(),
+          createdAt: new Date(baseTime - idx).toISOString(),
         };
       });
 
@@ -608,24 +615,21 @@ export default function TorneoJugar() {
     if (reorderingPending) return;
 
     const list = [...sortedPendingMatches];
-    const index = list.findIndex((m) => m.id === matchId);
-    if (index === -1) return;
+    const indexInSorted = list.findIndex((m) => m.id === matchId);
+    if (indexInSorted === -1) return;
 
-    // En torneos de 2 canchas, los primeros 2 partidos están "en cancha"
-    // y no se deben mover. En torneos de 1 cancha se puede reordenar todo.
-    const pinnedCount = maxCourts >= 2 ? maxCourts : 0;
-    const firstMovableIndex = pinnedCount;
+    const pinnedCount = maxCourts >= 1 ? maxCourts : 0; // índices 0..pinnedCount-1 son las canchas
+    const isLast = indexInSorted >= list.length - 1;
 
     if (direction === "up") {
-      if (index <= firstMovableIndex) return;
-      const newIndex = index - 1;
-      const [item] = list.splice(index, 1);
+      if (indexInSorted <= pinnedCount) return; // no cruzar las canchas
+      const newIndex = indexInSorted - 1;
+      const [item] = list.splice(indexInSorted, 1);
       list.splice(newIndex, 0, item);
     } else if (direction === "down") {
-      if (index < firstMovableIndex) return;
-      if (index >= list.length - 1) return;
-      const newIndex = index + 1;
-      const [item] = list.splice(index, 1);
+      if (isLast) return;
+      const newIndex = indexInSorted + 1;
+      const [item] = list.splice(indexInSorted, 1);
       list.splice(newIndex, 0, item);
     } else {
       return;
@@ -635,28 +639,19 @@ export default function TorneoJugar() {
   };
 
   // -----------------------------------
-  // Partidos inteligentes / personalizados
+  // Generar partido inteligente (global)
   // -----------------------------------
   const getPlayerMatchCount = (playerId) => {
     let count = 0;
     matches.forEach((m) => {
-      if (m.status !== "completed") return;
+      if (m.status !== "completed" && m.status !== "pending") return;
       const involved = [...(m.team1 || []), ...(m.team2 || [])];
-      if (involved.includes(playerId)) {
-        count++;
-      }
+      if (involved.includes(playerId)) count++;
     });
     return count;
   };
 
-  const teamKey = (team) => [...team].sort().join("|");
-  const matchupKey = (teamA, teamB) => {
-    const ta = teamKey(teamA);
-    const tb = teamKey(teamB);
-    return ta < tb ? `${ta}::${tb}` : `${tb}::${ta}`;
-  };
-
-  const generateSmartMatch = async () => {
+  const generateSmartMatchInternal = async () => {
     if (!tournament) return;
     const allIds = [
       ...(Array.isArray(tournament.players) ? tournament.players : []),
@@ -672,13 +667,20 @@ export default function TorneoJugar() {
     const existingTeams = new Set();
     const existingMatchups = new Set();
 
+    const teamKeyLocal = (team) => [...team].sort().join("|");
+    const matchupKeyLocal = (teamA, teamB) => {
+      const ta = teamKeyLocal(teamA);
+      const tb = teamKeyLocal(teamB);
+      return ta < tb ? `${ta}::${tb}` : `${tb}::${ta}`;
+    };
+
     matches.forEach((m) => {
       const t1 = m.team1 || [];
       const t2 = m.team2 || [];
-      if (t1.length === 2) existingTeams.add(teamKey(t1));
-      if (t2.length === 2) existingTeams.add(teamKey(t2));
+      if (t1.length === 2) existingTeams.add(teamKeyLocal(t1));
+      if (t2.length === 2) existingTeams.add(teamKeyLocal(t2));
       if (t1.length === 2 && t2.length === 2) {
-        existingMatchups.add(matchupKey(t1, t2));
+        existingMatchups.add(matchupKeyLocal(t1, t2));
       }
     });
 
@@ -691,60 +693,74 @@ export default function TorneoJugar() {
       return ia - ib;
     });
 
-    const [p1, p2, p3, p4] = sorted;
+    const now = Date.now();
 
-    const combos = [
-      { team1: [p1, p2], team2: [p3, p4] },
-      { team1: [p1, p3], team2: [p2, p4] },
-      { team1: [p1, p4], team2: [p2, p3] },
-    ];
+    let newMatches = [...matches];
 
-    const avgIdx = (team) =>
-      team.reduce(
-        (sum, id) =>
-          sum + getDivisionIndex(playersMap[id]?.rank || "Bronce III"),
-        0
-      ) / team.length;
+    if (maxCourts >= 2 && sorted.length >= 8) {
+      // Crear 2 partidos con 8 jugadores
+      const group1 = sorted.slice(0, 4);
+      const group2 = sorted.slice(4, 8);
 
-    const comboCost = (c) => {
-      const t1Idx = avgIdx(c.team1);
-      const t2Idx = avgIdx(c.team2);
-      const fairnessCost = Math.abs(t1Idx - t2Idx);
+      const best1 = buildBestTeams(
+        group1,
+        existingTeams,
+        existingMatchups,
+        playersMap
+      );
+      const best2 = buildBestTeams(
+        group2,
+        existingTeams,
+        existingMatchups,
+        playersMap
+      );
 
-      const t1Key = teamKey(c.team1);
-      const t2Key = teamKey(c.team2);
-      const teamPenalty =
-        (existingTeams.has(t1Key) ? 1 : 0) +
-        (existingTeams.has(t2Key) ? 1 : 0);
+      const newMatch1 = {
+        id: `match-${now}-${Math.random().toString(36).slice(2, 6)}`,
+        team1: best1.team1,
+        team2: best1.team2,
+        scoreTeam1: null,
+        scoreTeam2: null,
+        status: "pending",
+        createdAt: new Date(now).toISOString(),
+        type: "smart",
+      };
 
-      const muKey = matchupKey(c.team1, c.team2);
-      const matchupPenalty = existingMatchups.has(muKey) ? 1 : 0;
+      const newMatch2 = {
+        id: `match-${now + 1}-${Math.random().toString(36).slice(2, 6)}`,
+        team1: best2.team1,
+        team2: best2.team2,
+        scoreTeam1: null,
+        scoreTeam2: null,
+        status: "pending",
+        createdAt: new Date(now + 1).toISOString(),
+        type: "smart",
+      };
 
-      return fairnessCost + teamPenalty * 2 + matchupPenalty * 4;
-    };
+      newMatches = [...matches, newMatch1, newMatch2];
+    } else {
+      // Solo 1 partido
+      const base4 = sorted.slice(0, 4);
+      const best = buildBestTeams(
+        base4,
+        existingTeams,
+        existingMatchups,
+        playersMap
+      );
 
-    let best = combos[0];
-    let bestCost = comboCost(best);
-    for (let i = 1; i < combos.length; i++) {
-      const cost = comboCost(combos[i]);
-      if (cost < bestCost) {
-        best = combos[i];
-        bestCost = cost;
-      }
+      const newMatch = {
+        id: `match-${now}-${Math.random().toString(36).slice(2, 8)}`,
+        team1: best.team1,
+        team2: best.team2,
+        scoreTeam1: null,
+        scoreTeam2: null,
+        status: "pending",
+        createdAt: new Date(now).toISOString(),
+        type: "smart",
+      };
+
+      newMatches = [...matches, newMatch];
     }
-
-    const newMatch = {
-      id: `match-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      team1: best.team1,
-      team2: best.team2,
-      scoreTeam1: null,
-      scoreTeam2: null,
-      status: "pending",
-      createdAt: new Date().toISOString(),
-      type: "smart",
-    };
-
-    const newMatches = [...matches, newMatch];
 
     setSavingNewMatch(true);
     try {
@@ -752,7 +768,11 @@ export default function TorneoJugar() {
         matches: newMatches,
       });
       setMatches(newMatches);
-      alert("Partido inteligente creado.");
+      if (maxCourts >= 2 && sorted.length >= 8) {
+        alert("Se crearon 2 partidos inteligentes.");
+      } else {
+        alert("Partido inteligente creado.");
+      }
     } catch (err) {
       console.error("Error creando partido inteligente:", err);
       alert("No se pudo crear el partido.");
@@ -761,8 +781,110 @@ export default function TorneoJugar() {
     }
   };
 
+  const generateSmartMatch = () => {
+    generateSmartMatchInternal();
+  };
+
+  // -----------------------------------
+  // Mover partido pendiente directamente a cancha
+  // (si hay conflicto de jugadores en otra cancha -> modal)
+  // -----------------------------------
+  const handleSendPendingToCourt = async (matchId, courtIndex) => {
+    const target = sortedPendingMatches.find((m) => m.id === matchId);
+    if (!target) return;
+
+    if (maxCourts >= 2) {
+      const otherMatch = courtIndex === 1 ? matchCourt2 : matchCourt1;
+      if (otherMatch) {
+        const targetPlayers = new Set([
+          ...(target.team1 || []),
+          ...(target.team2 || []),
+        ]);
+        const otherPlayers = new Set([
+          ...(otherMatch.team1 || []),
+          ...(otherMatch.team2 || []),
+        ]);
+
+        const conflicts = [...targetPlayers].filter((p) =>
+          otherPlayers.has(p)
+        );
+
+        if (conflicts.length > 0) {
+          // Buscar sugerencia sin conflicto
+          let suggestedMatch = null;
+          for (const cand of sortedPendingMatches) {
+            if (cand.id === target.id) continue;
+            if (otherMatch && cand.id === otherMatch.id) continue;
+
+            const candPlayers = [
+              ...(cand.team1 || []),
+              ...(cand.team2 || []),
+            ];
+            const candConflicts = candPlayers.some((pid) =>
+              otherPlayers.has(pid)
+            );
+            if (!candConflicts) {
+              suggestedMatch = cand;
+              break;
+            }
+          }
+
+          setConflictModal({
+            courtIndex,
+            triedMatch: target,
+            suggestedMatch,
+            conflictPlayers: conflicts,
+          });
+          return;
+        }
+      }
+    }
+
+    const current1 = matchCourt1;
+    const current2 = matchCourt2;
+
+    let others = sortedPendingMatches.filter(
+      (m) =>
+        m.id !== matchId &&
+        m.id !== (current1 && current1.id) &&
+        m.id !== (current2 && current2.id)
+    );
+
+    let newOrder = [];
+
+    if (courtIndex === 1) {
+      newOrder.push(target);
+      if (maxCourts >= 2 && current2 && current2.id !== matchId) {
+        newOrder.push(current2);
+      }
+      newOrder = newOrder.concat(others);
+      if (current1 && current1.id !== matchId) {
+        newOrder.push(current1); // se baja a la cola
+      }
+    } else {
+      if (current1) {
+        newOrder.push(current1);
+      } else {
+        newOrder.push(target);
+      }
+      if (!current1) {
+        others = others.filter((m) => m.id !== target.id);
+      }
+
+      newOrder.push(target); // cancha 2
+      newOrder = newOrder.concat(others);
+      if (current2 && current2.id !== matchId) {
+        newOrder.push(current2); // baja a cola
+      }
+    }
+
+    await savePendingOrder(newOrder);
+  };
+
+  // -----------------------------------
+  // Partidos personalizados
+  // -----------------------------------
   const toggleCustomPlayer = (pid) => {
-    setCustomBalanceLabel("");
     setCustomSelected((prev) => {
       if (prev.includes(pid)) {
         return prev.filter((id) => id !== pid);
@@ -772,82 +894,38 @@ export default function TorneoJugar() {
     });
   };
 
-  const computeCustomBalance = () => {
-    if (customSelected.length !== 4) {
-      setCustomBalanceLabel(
-        "Selecciona exactamente 4 jugadores para evaluar el equilibrio."
-      );
-      return;
-    }
-
-    const [a, b, c, d] = customSelected;
-    const combos = [
-      { team1: [a, b], team2: [c, d] },
-      { team1: [a, c], team2: [b, d] },
-      { team1: [a, d], team2: [b, c] },
-    ];
-
-    const avgIdx = (team) =>
-      team.reduce(
-        (sum, id) =>
-          sum + getDivisionIndex(playersMap[id]?.rank || "Bronce III"),
-        0
-      ) / team.length;
-
-    let best = combos[0];
-    let bestDiff = Math.abs(avgIdx(best.team1) - avgIdx(best.team2));
-
-    for (let i = 1; i < combos.length; i++) {
-      const diff = Math.abs(
-        avgIdx(combos[i].team1) - avgIdx(combos[i].team2)
-      );
-      if (diff < bestDiff) {
-        best = combos[i];
-        bestDiff = diff;
-      }
-    }
-
-    let label = "";
-    if (bestDiff < 0.3) label = "Matchup muy equilibrado ✅";
-    else if (bestDiff < 0.8) label = "Matchup bastante equilibrado 👍";
-    else if (bestDiff < 1.5) label = "Matchup algo desequilibrado ⚠️";
-    else label = "Matchup muy desequilibrado ❗";
-
-    setCustomBalanceLabel(label);
-  };
-
   const createCustomMatch = async () => {
     if (customSelected.length !== 4) {
       alert("Selecciona exactamente 4 jugadores para crear un partido.");
       return;
     }
-    const [a, b, c, d] = customSelected;
 
-    const combos = [
-      { team1: [a, b], team2: [c, d] },
-      { team1: [a, c], team2: [b, d] },
-      { team1: [a, d], team2: [b, c] },
-    ];
+    const existingTeams = new Set();
+    const existingMatchups = new Set();
 
-    const avgIdx = (team) =>
-      team.reduce(
-        (sum, id) =>
-          sum + getDivisionIndex(playersMap[id]?.rank || "Bronce III"),
-        0
-      ) / team.length;
+    const teamKeyLocal = (team) => [...team].sort().join("|");
+    const matchupKeyLocal = (teamA, teamB) => {
+      const ta = teamKeyLocal(teamA);
+      const tb = teamKeyLocal(teamB);
+      return ta < tb ? `${ta}::${tb}` : `${tb}::${ta}`;
+    };
 
-    let best = combos[0];
-    let bestDiff = Math.abs(avgIdx(best.team1) - avgIdx(best.team2));
-
-    for (let i = 1; i < combos.length; i++) {
-      const diff = Math.abs(
-        avgIdx(combos[i].team1) - avgIdx(combos[i].team2)
-      );
-      if (diff < bestDiff) {
-        best = combos[i];
-        bestDiff = diff;
+    matches.forEach((m) => {
+      const t1 = m.team1 || [];
+      const t2 = m.team2 || [];
+      if (t1.length === 2) existingTeams.add(teamKeyLocal(t1));
+      if (t2.length === 2) existingTeams.add(teamKeyLocal(t2));
+      if (t1.length === 2 && t2.length === 2) {
+        existingMatchups.add(matchupKeyLocal(t1, t2));
       }
-    }
+    });
+
+    const best = buildBestTeams(
+      customSelected,
+      existingTeams,
+      existingMatchups,
+      playersMap
+    );
 
     const newMatch = {
       id: `match-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -870,7 +948,6 @@ export default function TorneoJugar() {
       setMatches(newMatches);
       alert("Partido personalizado creado.");
       setCustomSelected([]);
-      setCustomBalanceLabel("");
       setShowCustom(false);
     } catch (err) {
       console.error("Error creando partido personalizado:", err);
@@ -881,70 +958,9 @@ export default function TorneoJugar() {
   };
 
   // -----------------------------------
-  // Cálculo de costos
-  // -----------------------------------
-  const totalParticipants =
-    (Array.isArray(tournament?.players)
-      ? tournament.players.length
-      : 0) +
-    (Array.isArray(tournament?.guestPlayers)
-      ? tournament.guestPlayers.length
-      : 0);
-
-  const openCostModal = () => {
-    setCourtCostPerHour("");
-    setHoursCourt1("");
-    setHoursCourt2("");
-    setCostResult(null);
-    setShowCostModal(true);
-  };
-
-  const handleCalculateCosts = () => {
-    const parseNumber = (val) => {
-      if (val === "" || val == null) return 0;
-      const n = parseFloat(
-        String(val).replace(",", ".")
-      );
-      return Number.isNaN(n) ? 0 : n;
-    };
-
-    const costPerHour = parseNumber(courtCostPerHour);
-    const h1 = parseNumber(hoursCourt1);
-    const h2 = maxCourts >= 2 ? parseNumber(hoursCourt2) : 0;
-
-    if (costPerHour <= 0) {
-      alert("Ingresa un costo por hora válido (mayor a 0).");
-      return;
-    }
-    if (h1 <= 0 && h2 <= 0) {
-      alert(
-        "Ingresa al menos algunas horas de renta en una de las canchas."
-      );
-      return;
-    }
-    if (!totalParticipants || totalParticipants <= 0) {
-      alert(
-        "No se encontraron participantes en el torneo para dividir el costo."
-      );
-      return;
-    }
-
-    const totalHours = h1 + h2;
-    const totalCost = totalHours * costPerHour;
-    const perPlayer = totalCost / totalParticipants;
-
-    setCostResult({
-      totalHours,
-      totalCost,
-      perPlayer,
-      count: totalParticipants,
-    });
-  };
-
-  // -----------------------------------
   // Render
   // -----------------------------------
-  if (loading || !tournament) {
+  if (loading && !tournament) {
     return (
       <div
         style={{
@@ -953,313 +969,451 @@ export default function TorneoJugar() {
           color: "var(--muted)",
         }}
       >
-        {loading
-          ? "Cargando información del torneo..."
-          : "Torneo no encontrado."}
+        Cargando información del torneo...
       </div>
     );
   }
 
-  const completedCount = matches.filter((m) => m.status === "completed").length;
+  if (!loading && !tournament) {
+    return (
+      <div
+        style={{
+          padding: "1rem",
+          fontSize: "0.9rem",
+          color: "var(--muted)",
+        }}
+      >
+        Torneo no encontrado.
+      </div>
+    );
+  }
+
+  const completedCount = matches.filter(
+    (m) => m.status === "completed"
+  ).length;
   const pendingCount = pendingMatches.length;
   const isTournamentCompleted = tournament.status === "completed";
 
-  return (
+  // Preview partido personalizado (4 seleccionados)
+  let customPreviewTeam1 = [];
+  let customPreviewTeam2 = [];
+  let customPreviewLabel = "";
+
+  if (customSelected.length === 4) {
+    const existingTeams = new Set();
+    const existingMatchups = new Set();
+
+    const teamKeyLocal = (team) => [...team].sort().join("|");
+    const matchupKeyLocal = (teamA, teamB) => {
+      const ta = teamKeyLocal(teamA);
+      const tb = teamKeyLocal(teamB);
+      return ta < tb ? `${ta}::${tb}` : `${tb}::${ta}`;
+    };
+
+    matches.forEach((m) => {
+      const t1 = m.team1 || [];
+      const t2 = m.team2 || [];
+      if (t1.length === 2) existingTeams.add(teamKeyLocal(t1));
+      if (t2.length === 2) existingTeams.add(teamKeyLocal(t2));
+      if (t1.length === 2 && t2.length === 2) {
+        existingMatchups.add(matchupKeyLocal(t1, t2));
+      }
+    });
+
+    const best = buildBestTeams(
+      customSelected,
+      existingTeams,
+      existingMatchups,
+      playersMap
+    );
+    customPreviewTeam1 = best.team1;
+    customPreviewTeam2 = best.team2;
+
+    if (best.diff < 0.3) customPreviewLabel = "Matchup muy equilibrado ✅";
+    else if (best.diff < 0.8)
+      customPreviewLabel = "Matchup bastante equilibrado 👍";
+    else if (best.diff < 1.5)
+      customPreviewLabel = "Matchup algo desequilibrado ⚠️";
+    else customPreviewLabel = "Matchup muy desequilibrado ❗";
+  }
+
+  // Helper: jugadores en horizontal con avatar grande
+  const renderTeamPlayersRow = (playerIds) => (
     <div
       style={{
         display: "flex",
-        flexDirection: "column",
-        gap: "1rem",
-        paddingBottom: "0.75rem",
+        flexWrap: "wrap",
+        justifyContent: "center",
+        gap: "0.7rem",
       }}
     >
-      {/* HEADER */}
-      <section
+      {playerIds.map((pid) => {
+        const p = getPlayerDisplay(pid);
+        return (
+          <div
+            key={pid}
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              gap: "0.2rem",
+            }}
+          >
+            <div
+              style={{
+                width: 70,
+                height: 70,
+                borderRadius: "999px",
+                overflow: "hidden",
+                background: p.avatar
+                  ? "var(--bg-elevated)"
+                  : "radial-gradient(circle at 30% 20%, #4084d6ff, #174ab8ff)",
+                boxShadow: p.avatar
+                  ? "0 0 0 1px rgba(15, 23, 42, 0.29)"
+                  : "0 0 0 1px rgba(37, 100, 235, 0.42)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: "1.5rem",
+                fontWeight: 600,
+                color: p.avatar ? "inherit" : "#ffffff",
+              }}
+            >
+              {p.avatar ? (
+                <img
+                  src={p.avatar}
+                  alt={p.name}
+                  style={{
+                    width: "100%",
+                    height: "100%",
+                    objectFit: "cover",
+                  }}
+                />
+              ) : (
+                (p.name || "J")[0].toUpperCase()
+              )}
+            </div>
+            <span
+              style={{
+                fontSize: "0.78rem",
+                maxWidth: 100,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+                textAlign: "center",
+                fontWeight: 600,
+                color: "var(--fg)",
+              }}
+            >
+              {shortName(p.name)}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+
+  // Helper: render cancha
+  const renderCourt = (courtIndex, match) => {
+    const courtScores = scores[courtIndex] || { team1: 0, team2: 0 };
+
+    return (
+      <div
         style={{
-          borderRadius: "1.1rem",
-          padding: "0.9rem 1rem 0.6rem 1rem",
-          border: "1px solid var(--border)",
-          background: "var(--bg-elevated)",
+          paddingTop: courtIndex === 1 ? "0.5rem" : "0.75rem",
+          marginTop: courtIndex === 1 ? 0 : "0.75rem",
+          borderTop: courtIndex === 1 ? "none" : "1px solid var(--border)",
         }}
       >
         <p
           style={{
             margin: 0,
-            fontSize: "0.75rem",
+            fontSize: "0.8rem",
             color: "var(--muted)",
+            display: "flex",
+            alignItems: "center",
+            gap: "0.25rem",
           }}
         >
-          {isTournamentCompleted ? "Torneo completado" : "Jugando torneo"}
-        </p>
-        <h1
-          style={{
-            margin: 0,
-            marginTop: "0.15rem",
-            fontSize: "1rem",
-            fontWeight: 700,
-          }}
-        >
-          {tournament.name}
-        </h1>
-        <p
-          style={{
-            margin: 0,
-            marginTop: "0.3rem",
-            fontSize: "0.78rem",
-            color: "var(--muted)",
-          }}
-        >
-          Partidos completados: <strong>{completedCount}</strong> • Pendientes:{" "}
-          <strong>{pendingCount}</strong> •{" "}
-          {maxCourts} {maxCourts === 1 ? "cancha" : "canchas"}
+          <Icon name="court" size={14} color="var(--muted)" />
+          <span>Partido en cancha {courtIndex}</span>
         </p>
 
-        {/* Selector de cancha (solo si hay 2) */}
-        {maxCourts > 1 && (
-          <div
+        {!match ? (
+          <p
             style={{
-              marginTop: "0.5rem",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              gap: "0.5rem",
-              fontSize: "0.78rem",
+              margin: "0.3rem 0 0",
+              fontSize: "0.8rem",
+              color: "var(--muted)",
             }}
           >
+            No hay partido asignado a esta cancha.
+          </p>
+        ) : (
+          <>
+            {/* Jugadores en horizontal */}
             <div
               style={{
-                display: "flex",
-                alignItems: "center",
-                gap: "0.35rem",
+                marginTop: "0.6rem",
               }}
             >
-              <Icon name="court" size={16} color="var(--muted)" />
-              <span style={{ color: "var(--muted)" }}>Cancha actual:</span>
               <div
                 style={{
                   display: "flex",
-                  gap: "0.25rem",
+                  alignItems: "flex-start",
+                  justifyContent: "space-between",
+                  gap: "1rem",
                 }}
               >
-                {[1, 2].map((c) => {
-                  const active = activeCourt === c;
-                  return (
-                    <button
-                      key={c}
-                      type="button"
-                      onClick={() => setActiveCourt(c)}
-                      style={{
-                        borderRadius: "999px",
-                        border: active
-                          ? "1px solid var(--accent)"
-                          : "1px solid var(--border)",
-                        padding: "0.15rem 0.55rem",
-                        background: active
-                          ? "var(--accent-soft)"
-                          : "transparent",
-                        fontSize: "0.75rem",
-                        cursor: "pointer",
-                      }}
-                    >
-                      {c}
-                    </button>
-                  );
-                })}
+                <div
+                  style={{
+                    flex: 1,
+                    minWidth: 0,
+                  }}
+                >
+                  {renderTeamPlayersRow(match.team1 || [])}
+                </div>
+
+                <div
+                  style={{
+                    minWidth: 30,
+                    textAlign: "center",
+                    fontSize: "0.85rem",
+                    fontWeight: 700,
+                    color: "var(--muted)",
+                    marginTop: "1.2rem",
+                  }}
+                >
+                  VS
+                </div>
+
+                <div
+                  style={{
+                    flex: 1,
+                    minWidth: 0,
+                  }}
+                >
+                  {renderTeamPlayersRow(match.team2 || [])}
+                </div>
               </div>
             </div>
 
+            {/* Marcador grande */}
             <div
               style={{
-                display: "flex",
-                gap: "0.4rem",
-                alignItems: "center",
-                flexWrap: "wrap",
-                justifyContent: "flex-end",
+                marginTop: "0.6rem",
+                textAlign: "center",
               }}
             >
-              <button
-                type="button"
-                onClick={openCostModal}
+              <div
                 style={{
-                  borderRadius: "999px",
-                  border: "1px solid var(--border)",
-                  padding: "0.25rem 0.6rem",
-                  background: "transparent",
-                  fontSize: "0.75rem",
-                  cursor: "pointer",
-                  color: "var(--fg)",
-                  whiteSpace: "nowrap",
+                  fontSize: "2rem",
+                  fontWeight: 800,
                 }}
               >
-                Calcular costos
-              </button>
-              <button
-                type="button"
-                onClick={handleCompleteTournament}
-                disabled={completingTournament || isTournamentCompleted}
-                style={{
-                  borderRadius: "999px",
-                  border: isTournamentCompleted
-                    ? "1px solid var(--border)"
-                    : "1px solid var(--accent)",
-                  padding: "0.25rem 0.6rem",
-                  background: isTournamentCompleted
-                    ? "transparent"
-                    : "var(--accent-soft)",
-                  fontSize: "0.75rem",
-                  cursor:
-                    completingTournament || isTournamentCompleted
-                      ? "default"
-                      : "pointer",
-                  color: isTournamentCompleted
-                    ? "var(--muted)"
-                    : "var(--fg)",
-                  whiteSpace: "nowrap",
-                }}
-              >
-                {isTournamentCompleted
-                  ? "Torneo completado"
-                  : completingTournament
-                  ? "Completando..."
-                  : "Completar torneo"}
-              </button>
+                {courtScores.team1} - {courtScores.team2}
+              </div>
             </div>
-          </div>
-        )}
 
-        {maxCourts === 1 && (
-          <div
+            {/* Inputs marcador */}
+            <div
+              style={{
+                marginTop: "0.5rem",
+                display: "flex",
+                flexDirection: "column",
+                gap: "0.4rem",
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  flexWrap: "wrap",
+                  gap: "0.6rem",
+                  justifyContent: "center",
+                }}
+              >
+                <ScoreNumberInput
+                  label="Equipo 1"
+                  value={courtScores.team1}
+                  onChange={(val) => handleScoreChange(courtIndex, 1, val)}
+                />
+                <ScoreNumberInput
+                  label="Equipo 2"
+                  value={courtScores.team2}
+                  onChange={(val) => handleScoreChange(courtIndex, 2, val)}
+                />
+              </div>
+
+              <div
+                style={{
+                  display: "flex",
+                  flexWrap: "wrap",
+                  gap: "0.5rem",
+                  justifyContent: "center",
+                  marginTop: "0.1rem",
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={() => handleSaveResultForCourt(courtIndex)}
+                  disabled={savingResult}
+                  style={{
+                    borderRadius: "0.9rem",
+                    border: "none",
+                    padding: "0.5rem 0.9rem",
+                    background: "var(--accent)",
+                    fontSize: "0.8rem",
+                    cursor: savingResult ? "default" : "pointer",
+                    fontWeight: 600,
+                    color: "#ffffff",
+                    boxShadow: "0 0 0 1px rgba(15,23,42,0.2)",
+                    opacity: savingResult ? 0.8 : 1,
+                  }}
+                >
+                  {savingResult ? "Guardando..." : "Guardar resultado"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleMarkDrawForCourt(courtIndex)}
+                  disabled={savingResult}
+                  style={{
+                    borderRadius: "0.9rem",
+                    border: "1px solid var(--border)",
+                    padding: "0.5rem 0.8rem",
+                    background: "transparent",
+                    fontSize: "0.8rem",
+                    color: "var(--muted)",
+                    cursor: savingResult ? "default" : "pointer",
+                  }}
+                >
+                  Marcar empate (2–2)
+                </button>
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <>
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          gap: "1rem",
+          paddingBottom: "0.75rem",
+        }}
+      >
+        {/* HEADER */}
+        <section
+          style={{
+            borderRadius: "1.1rem",
+            padding: "0.9rem 1rem 0.75rem 1rem",
+            border: "1px solid var(--border)",
+            background: "var(--bg-elevated)",
+          }}
+        >
+          <p
             style={{
-              marginTop: "0.5rem",
-              display: "flex",
-              justifyContent: "flex-end",
-              gap: "0.4rem",
-              flexWrap: "wrap",
+              margin: 0,
+              fontSize: "0.75rem",
+              color: "var(--muted)",
             }}
           >
+            {isTournamentCompleted ? "Torneo completado" : "Jugando torneo"}
+          </p>
+          <h1
+            style={{
+              margin: 0,
+              marginTop: "0.15rem",
+              fontSize: "1rem",
+              fontWeight: 700,
+            }}
+          >
+            {tournament.name}
+          </h1>
+          <p
+            style={{
+              margin: 0,
+              marginTop: "0.3rem",
+              fontSize: "0.78rem",
+              color: "var(--muted)",
+            }}
+          >
+            Partidos completados: <strong>{completedCount}</strong> • Pendientes:{" "}
+            <strong>{pendingCount}</strong> •{" "}
+            {maxCourts} {maxCourts === 1 ? "cancha" : "canchas"}
+          </p>
+
+          <div
+            style={{
+              marginTop: "0.6rem",
+              display: "flex",
+              flexWrap: "wrap",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: "0.6rem",
+              fontSize: "0.78rem",
+            }}
+          >
+
             <button
               type="button"
-              onClick={openCostModal}
+              onClick={() => navigate(`/torneos/${tournament.id}`)}
               style={{
                 borderRadius: "999px",
                 border: "1px solid var(--border)",
-                padding: "0.25rem 0.6rem",
-                background: "transparent",
-                fontSize: "0.75rem",
+                padding: "0.35rem 0.8rem",
+                background: "var(--bg-elevated)",
+                fontSize: "0.78rem",
                 cursor: "pointer",
-                color: "var(--fg)",
+                display: "flex",
+                alignItems: "center",
+                gap: "0.35rem",
                 whiteSpace: "nowrap",
+                color: "var(--fg)",
               }}
             >
-              Calcular costos
-            </button>
-            <button
-              type="button"
-              onClick={handleCompleteTournament}
-              disabled={completingTournament || isTournamentCompleted}
-              style={{
-                borderRadius: "999px",
-                border: isTournamentCompleted
-                  ? "1px solid var(--border)"
-                  : "1px solid var(--accent)",
-                padding: "0.25rem 0.6rem",
-                background: isTournamentCompleted
-                  ? "transparent"
-                  : "var(--accent-soft)",
-                fontSize: "0.75rem",
-                cursor:
-                  completingTournament || isTournamentCompleted
-                    ? "default"
-                    : "pointer",
-                color: isTournamentCompleted
-                  ? "var(--muted)"
-                  : "var(--fg)",
-              }}
-            >
-              {isTournamentCompleted
-                ? "Torneo completado"
-                : completingTournament
-                ? "Completando..."
-                : "Completar torneo"}
+              <Icon name="arrow-left" size={14} />
+              <span>Ver detalles del torneo</span>
             </button>
           </div>
-        )}
+        </section>
 
-        <div
-          style={{
-            marginTop: "0.4rem",
-            fontSize: "0.72rem",
-            color: "var(--muted)",
-            textAlign: "right",
-          }}
-        >
-          El ranking del torneo no depende de tu división de PL, solo de tus
-          resultados aquí.
-        </div>
+        {/* PARTIDOS EN CANCHA */}
+        <section className="card">
+          <h2
+            style={{
+              margin: 0,
+              fontSize: "0.95rem",
+            }}
+          >
+            Partidos en cancha
+          </h2>
 
-        {/* Tabs */}
-        <div
-          style={{
-            marginTop: "0.65rem",
-            display: "flex",
-            gap: "0.35rem",
-            borderRadius: "999px",
-            padding: "0.1rem",
-            backgroundColor: "var(--bg)",
-          }}
-        >
-          {["partidos", "ranking", "historial"].map((tab) => {
-            const label =
-              tab === "partidos"
-                ? "Partidos"
-                : tab === "ranking"
-                ? "Ranking"
-                : "Historial";
-            const active = activeTab === tab;
-            return (
-              <button
-                key={tab}
-                type="button"
-                onClick={() => setActiveTab(tab)}
-                style={{
-                  flex: 1,
-                  borderRadius: "999px",
-                  border: "none",
-                  padding: "0.35rem 0.2rem",
-                  fontSize: "0.78rem",
-                  cursor: "pointer",
-                  background: active
-                    ? "var(--accent-soft)"
-                    : "transparent",
-                  color: active ? "var(--fg)" : "var(--muted)",
-                  fontWeight: active ? 600 : 400,
-                }}
-              >
-                {label}
-              </button>
-            );
-          })}
-        </div>
-      </section>
+          {maxCourts >= 1 && renderCourt(1, matchCourt1)}
+          {maxCourts >= 2 && renderCourt(2, matchCourt2)}
 
-      {/* TAB: PARTIDOS */}
-      {activeTab === "partidos" && (
-        <>
-          {/* Partido en cancha (según cancha activa) + jugadores en espera */}
-          <section className="card">
-            <h2
+          {/* Jugadores en espera */}
+          <div
+            style={{
+              marginTop: "0.9rem",
+              borderTop: "1px solid var(--border)",
+              paddingTop: "0.55rem",
+            }}
+          >
+            <h3
               style={{
                 margin: 0,
-                marginBottom: "0.5rem",
-                fontSize: "0.95rem",
+                marginBottom: "0.4rem",
+                fontSize: "0.9rem",
               }}
             >
-              {maxCourts > 1
-                ? `Partido en cancha ${activeCourt}`
-                : "Partido en cancha"}
-            </h2>
-
-            {!currentMatch ? (
+              Jugadores en espera
+            </h3>
+            {waitingPlayers.length === 0 ? (
               <p
                 style={{
                   margin: 0,
@@ -1267,164 +1421,156 @@ export default function TorneoJugar() {
                   color: "var(--muted)",
                 }}
               >
-                No hay partido asignado en esta cancha. Crea nuevos partidos
-                inteligentes o personalizados abajo.
+                No hay jugadores en espera en este momento.
               </p>
             ) : (
-              <>
-                {/* Jugadores */}
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    gap: "0.4rem",
-                    alignItems: "flex-end",
-                  }}
-                >
-                  <div
-                    style={{
-                      display: "flex",
-                      flex: 1,
-                      justifyContent: "flex-start",
-                      gap: "0.4rem",
-                    }}
-                  >
-                    {(currentMatch.team1 || []).map((pid) => {
-                      const p = getPlayerDisplay(pid);
-                      return (
-                        <PlayerAvatar
-                          key={pid}
-                          name={p.name}
-                          avatar={p.avatar}
-                        />
-                      );
-                    })}
-                  </div>
-
-                  <div
-                    style={{
-                      width: 40,
-                      textAlign: "center",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                    }}
-                  >
-                    <span
+              <div
+                style={{
+                  display: "flex",
+                  flexWrap: "wrap",
+                  gap: "0.4rem",
+                }}
+              >
+                {waitingPlayers.map((pid) => {
+                  const p = getPlayerDisplay(pid);
+                  return (
+                    <div
+                      key={pid}
                       style={{
-                        fontSize: "0.8rem",
-                        fontWeight: 700,
-                        color: "var(--muted)",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "0.25rem",
+                        borderRadius: "999px",
+                        padding: "0.25rem 0.45rem",
+                        background: "var(--bg)",
+                        border: "1px solid var(--border)",
+                        fontSize: "0.78rem",
                       }}
                     >
-                      VS
-                    </span>
-                  </div>
-
-                  <div
-                    style={{
-                      display: "flex",
-                      flex: 1,
-                      justifyContent: "flex-end",
-                      gap: "0.4rem",
-                    }}
-                  >
-                    {(currentMatch.team2 || []).map((pid) => {
-                      const p = getPlayerDisplay(pid);
-                      return (
-                        <PlayerAvatar
-                          key={pid}
-                          name={p.name}
-                          avatar={p.avatar}
-                        />
-                      );
-                    })}
-                  </div>
-                </div>
-
-                {/* Marcador central */}
-                <div
-                  style={{
-                    marginTop: "0.9rem",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    gap: "0.6rem",
-                  }}
-                >
-                  <ScoreNumberInput
-                    label="Equipo 1"
-                    value={scoreTeam1}
-                    onChange={handleScoreTeam1Change}
-                  />
-                  <span
-                    style={{
-                      fontSize: "1.1rem",
-                      fontWeight: 700,
-                      color: "var(--muted)",
-                    }}
-                  >
-                    -
-                  </span>
-                  <ScoreNumberInput
-                    label="Equipo 2"
-                    value={scoreTeam2}
-                    onChange={handleScoreTeam2Change}
-                  />
-                </div>
-
-                <div
-                  style={{
-                    marginTop: "0.65rem",
-                    display: "flex",
-                    gap: "0.5rem",
-                  }}
-                >
-                  <button
-                    type="button"
-                    onClick={handleSaveResult}
-                    disabled={savingResult}
-                    style={{
-                      flex: 1,
-                      borderRadius: "0.9rem",
-                      border: "none",
-                      padding: "0.5rem 0.6rem",
-                      background:
-                        "linear-gradient(135deg, var(--accent), rgba(59,130,246,0.9))",
-                      color: "#ffffff",
-                      fontSize: "0.84rem",
-                      fontWeight: 600,
-                      cursor: savingResult ? "default" : "pointer",
-                    }}
-                  >
-                    {savingResult ? "Guardando..." : "Guardar resultado"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleMarkDraw}
-                    disabled={savingResult}
-                    style={{
-                      borderRadius: "0.9rem",
-                      border: "1px solid var(--border)",
-                      padding: "0.5rem 0.6rem",
-                      background: "transparent",
-                      fontSize: "0.8rem",
-                      color: "var(--muted)",
-                      cursor: savingResult ? "default" : "pointer",
-                    }}
-                  >
-                    Marcar empate (2–2)
-                  </button>
-                </div>
-              </>
+                      <div
+                        style={{
+                          width: 22,
+                          height: 22,
+                          borderRadius: "999px",
+                          overflow: "hidden",
+                          background: p.avatar
+                            ? "var(--bg-elevated)"
+                            : "radial-gradient(circle at 30% 20%, #4084d6ff, #174ab8ff)",
+                          boxShadow: p.avatar
+                            ? "0 0 0 1px rgba(15,23,42,0.5)"
+                            : "0 0 0 1px rgba(20, 65, 160, 0.7)",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          fontSize: "0.75rem",
+                          fontWeight: 600,
+                          color: p.avatar ? "inherit" : "#ffffff",
+                        }}
+                      >
+                        {p.avatar ? (
+                          <img
+                            src={p.avatar}
+                            alt={p.name}
+                            style={{
+                              width: "100%",
+                              height: "100%",
+                              objectFit: "cover",
+                            }}
+                          />
+                        ) : (
+                          (p.name || "J")[0].toUpperCase()
+                        )}
+                      </div>
+                      <span
+                        style={{
+                          maxWidth: 120,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                          color: "var(--fg)",
+                        }}
+                      >
+                        {shortName(p.name)}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
             )}
+          </div>
+        </section>
 
-            {/* Jugadores en espera */}
-            <div
+        {/* NUEVOS PARTIDOS */}
+        <section>
+          <h2
+            style={{
+              margin: 0,
+              marginBottom: "0.45rem",
+              fontSize: "0.95rem",
+            }}
+          >
+            Nuevos partidos
+          </h2>
+          <div
+            style={{
+              display: "flex",
+              flexWrap: "wrap",
+              gap: "0.5rem",
+              marginBottom: "0.6rem",
+            }}
+          >
+            <button
+              type="button"
+              onClick={generateSmartMatch}
+              disabled={savingNewMatch}
               style={{
-                marginTop: "0.9rem",
-                borderTop: "1px solid var(--border)",
-                paddingTop: "0.55rem",
+                flex: 1,
+                borderRadius: "0.9rem",
+                border: "none",
+                padding: "0.45rem 0.6rem",
+                background:
+                  "linear-gradient(135deg, var(--accent), rgba(59,130,246,0.9))",
+                color: "#ffffff",
+                fontSize: "0.8rem",
+                fontWeight: 600,
+                cursor: savingNewMatch ? "default" : "pointer",
+                display: "flex",
+                alignItems: "center",
+                gap: "0.3rem",
+                justifyContent: "center",
+              }}
+            >
+              <Icon name="magic" size={14} color="#ffffff" />
+              Inteligente
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowCustom((v) => !v)}
+              style={{
+                flex: 1,
+                borderRadius: "0.9rem",
+                border: "1px solid var(--border)",
+                padding: "0.45rem 0.6rem",
+                background: "transparent",
+                fontSize: "0.8rem",
+                color: "var(--fg)",
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                gap: "0.3rem",
+                justifyContent: "center",
+              }}
+            >
+              <Icon name="custom" size={14} color="var(--muted)" />
+              Personalizado
+            </button>
+          </div>
+
+          {showCustom && (
+            <section
+              className="card"
+              style={{
+                marginTop: "0.1rem",
               }}
             >
               <h3
@@ -1434,70 +1580,85 @@ export default function TorneoJugar() {
                   fontSize: "0.9rem",
                 }}
               >
-                Jugadores en espera
+                Selecciona 4 jugadores
               </h3>
-              {waitingPlayers.length === 0 ? (
-                <p
-                  style={{
-                    margin: 0,
-                    fontSize: "0.8rem",
-                    color: "var(--muted)",
-                  }}
-                >
-                  No hay jugadores en espera en este momento.
-                </p>
-              ) : (
-                <div
-                  style={{
-                    display: "flex",
-                    flexWrap: "wrap",
-                    gap: "0.4rem",
-                  }}
-                >
-                  {waitingPlayers.map((pid) => {
-                    const p = getPlayerDisplay(pid);
-                    return (
+              <p
+                style={{
+                  margin: 0,
+                  marginBottom: "0.5rem",
+                  fontSize: "0.78rem",
+                  color: "var(--muted)",
+                }}
+              >
+                Toca para seleccionar hasta 4 jugadores. Cuando tengas 4, verás
+                cómo quedaría el partido.
+              </p>
+
+              <div
+                style={{
+                  display: "flex",
+                  flexWrap: "wrap",
+                  gap: "0.4rem",
+                }}
+              >
+                {allTournamentPlayers.map((pid) => {
+                  const p = getPlayerDisplay(pid);
+                  const selected = customSelected.includes(pid);
+                  return (
+                    <button
+                      key={pid}
+                      type="button"
+                      onClick={() => toggleCustomPlayer(pid)}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "0.3rem",
+                        borderRadius: "999px",
+                        padding: "0.25rem 0.55rem",
+                        border: selected
+                          ? "1px solid var(--accent)"
+                          : "1px solid var(--border)",
+                        background: selected
+                          ? "var(--accent-soft)"
+                          : "var(--bg)",
+                        fontSize: "0.78rem",
+                        cursor: "pointer",
+                      }}
+                    >
                       <div
-                        key={pid}
                         style={{
+                          width: 22,
+                          height: 22,
+                          borderRadius: "999px",
+                          overflow: "hidden",
+                          background: p.avatar
+                            ? "var(--bg-elevated)"
+                            : "radial-gradient(circle at 30% 20%, #4084d6ff, #174ab8ff)",
+                          boxShadow: p.avatar
+                            ? "0 0 0 1px rgba(15,23,42,0.5)"
+                            : "0 0 0 1px rgba(20, 65, 160, 0.7)",
                           display: "flex",
                           alignItems: "center",
-                          gap: "0.25rem",
-                          borderRadius: "999px",
-                          padding: "0.25rem 0.45rem",
-                          background: "var(--bg)",
-                          border: "1px solid var(--border)",
-                          fontSize: "0.78rem",
+                          justifyContent: "center",
+                          fontSize: "0.75rem",
+                          fontWeight: 600,
+                          color: p.avatar ? "inherit" : "#ffffff",
                         }}
                       >
-                        <div
-                          style={{
-                            width: 22,
-                            height: 22,
-                            borderRadius: "999px",
-                            overflow: "hidden",
-                            backgroundColor: "var(--bg-elevated)",
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            fontSize: "0.75rem",
-                            fontWeight: 600,
-                          }}
-                        >
-                          {p.avatar ? (
-                            <img
-                              src={p.avatar}
-                              alt={p.name}
-                              style={{
-                                width: "100%",
-                                height: "100%",
-                                objectFit: "cover",
-                              }}
-                            />
-                          ) : (
-                            (p.name || "J")[0].toUpperCase()
-                          )}
-                        </div>
+                        {p.avatar ? (
+                          <img
+                            src={p.avatar}
+                            alt={p.name}
+                            style={{
+                              width: "100%",
+                              height: "100%",
+                              objectFit: "cover",
+                            }}
+                          />
+                        ) : (
+                          (p.name || "J")[0].toUpperCase()
+                        )}
+                      </div>
                         <span
                           style={{
                             maxWidth: 120,
@@ -1505,596 +1666,156 @@ export default function TorneoJugar() {
                             textOverflow: "ellipsis",
                             whiteSpace: "nowrap",
                             color: "var(--fg)",
+                            fontWeight: 500,
                           }}
                         >
-                          {p.name}
+                          {shortName(p.name)}
                         </span>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          </section>
-
-          {/* TODOS los partidos pendientes */}
-          <section className="card">
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                gap: "0.4rem",
-                marginBottom: "0.4rem",
-              }}
-            >
-              <h2
-                style={{
-                  margin: 0,
-                  fontSize: "0.95rem",
-                }}
-              >
-                Partidos pendientes
-              </h2>
-              {pendingMatches.length > 0 && (
-                <span
-                  style={{
-                    fontSize: "0.7rem",
-                    color: "var(--muted)",
-                    textAlign: "right",
-                  }}
-                >
-                  Usa las flechas para reacomodar el orden.
-                  {maxCourts >= 2 &&
-                    " Los primeros 2 partidos son los que están en cancha."}
-                </span>
-              )}
-            </div>
-
-            {pendingMatches.length === 0 ? (
-              <p
-                style={{
-                  margin: 0,
-                  fontSize: "0.8rem",
-                  color: "var(--muted)",
-                }}
-              >
-                No hay partidos pendientes por jugar.
-              </p>
-            ) : (
-              <div
-                style={{
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: "0.35rem",
-                  fontSize: "0.78rem",
-                }}
-              >
-                {sortedPendingMatches.map((m, index) => {
-                  const t1Names = (m.team1 || [])
-                    .map((pid) => shortName(getPlayerDisplay(pid).name))
-                    .join(" & ");
-                  const t2Names = (m.team2 || [])
-                    .map((pid) => shortName(getPlayerDisplay(pid).name))
-                    .join(" & ");
-
-                  const pinnedCount = maxCourts >= 2 ? maxCourts : 0;
-                  const isPinned = maxCourts >= 2 && index < pinnedCount;
-
-                  return (
-                    <div
-                      key={m.id}
-                      style={{
-                        borderRadius: "0.8rem",
-                        border: "1px solid var(--border)",
-                        padding: "0.4rem 0.45rem",
-                        background: "var(--bg)",
-                      }}
-                    >
-                      <div
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "space-between",
-                          gap: "0.25rem",
-                        }}
-                      >
-                        <span
-                          style={{
-                            flex: 1,
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
-                            whiteSpace: "nowrap",
-                            color: "var(--fg)",
-                          }}
-                        >
-                          {t1Names}
-                        </span>
-
-                        <div
-                          style={{
-                            width: 90,
-                            display: "flex",
-                            flexDirection: "column",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            gap: "0.15rem",
-                          }}
-                        >
-                          <span
-                            style={{
-                              textAlign: "center",
-                              fontWeight: 600,
-                              color: "var(--muted)",
-                              fontSize: "0.8rem",
-                            }}
-                          >
-                            VS
-                          </span>
-                          <div
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              gap: "0.3rem",
-                            }}
-                          >
-                            <button
-                              type="button"
-                              onClick={(e) =>
-                                handleDeletePendingMatch(m.id, e)
-                              }
-                              style={{
-                                border: "none",
-                                background: "transparent",
-                                color: "#ef4444",
-                                fontSize: "0.7rem",
-                                cursor: "pointer",
-                                padding: 0,
-                              }}
-                            >
-                              Eliminar
-                            </button>
-                            {!isPinned && (
-                              <div
-                                style={{
-                                  display: "flex",
-                                  flexDirection: "column",
-                                  gap: "0.15rem",
-                                }}
-                              >
-                                <button
-                                  type="button"
-                                  disabled={
-                                    reorderingPending || index === 0
-                                  }
-                                  onClick={() =>
-                                    handleMovePendingMatch(m.id, "up")
-                                  }
-                                  style={{
-                                    border: "none",
-                                    background: "transparent",
-                                    fontSize: "0.7rem",
-                                    cursor: reorderingPending
-                                      ? "default"
-                                      : "pointer",
-                                    color: "var(--muted)",
-                                    padding: 0,
-                                    lineHeight: 1,
-                                  }}
-                                >
-                                  ↑
-                                </button>
-                                <button
-                                  type="button"
-                                  disabled={
-                                    reorderingPending ||
-                                    index ===
-                                      sortedPendingMatches.length - 1
-                                  }
-                                  onClick={() =>
-                                    handleMovePendingMatch(m.id, "down")
-                                  }
-                                  style={{
-                                    border: "none",
-                                    background: "transparent",
-                                    fontSize: "0.7rem",
-                                    cursor: reorderingPending
-                                      ? "default"
-                                      : "pointer",
-                                    color: "var(--muted)",
-                                    padding: 0,
-                                    lineHeight: 1,
-                                  }}
-                                >
-                                  ↓
-                                </button>
-                              </div>
-                            )}
-                          </div>
-                        </div>
-
-                        <span
-                          style={{
-                            flex: 1,
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
-                            whiteSpace: "nowrap",
-                            textAlign: "right",
-                            color: "var(--fg)",
-                          }}
-                        >
-                          {t2Names}
-                        </span>
-                      </div>
-                      <div
-                        style={{
-                          marginTop: "0.2rem",
-                          fontSize: "0.7rem",
-                          color: "var(--muted)",
-                          display: "flex",
-                          justifyContent: "space-between",
-                        }}
-                      >
-                        <span>
-                          {m.type === "smart"
-                            ? "Inteligente"
-                            : m.type === "custom"
-                            ? "Personalizado"
-                            : "Partido"}
-                          {index === 0 && " • Cancha 1"}
-                          {index === 1 && maxCourts >= 2 && " • Cancha 2"}
-                        </span>
-                        <span>
-                          {m.createdAt
-                            ? new Date(m.createdAt).toLocaleTimeString(
-                                "es-MX",
-                                { hour: "2-digit", minute: "2-digit" }
-                              )
-                            : ""}
-                        </span>
-                      </div>
-                    </div>
+                    </button>
                   );
                 })}
               </div>
-            )}
-          </section>
 
-          {/* CREAR PARTIDOS NUEVOS */}
-          <section className="card">
-            <h2
-              style={{
-                margin: 0,
-                marginBottom: "0.4rem",
-                fontSize: "0.95rem",
-              }}
-            >
-              Nuevos partidos
-            </h2>
-
-            <div
-              style={{
-                display: "flex",
-                gap: "0.5rem",
-                marginBottom: "0.6rem",
-              }}
-            >
-              <button
-                type="button"
-                onClick={generateSmartMatch}
-                disabled={savingNewMatch}
-                style={{
-                  flex: 1,
-                  borderRadius: "0.9rem",
-                  border: "none",
-                  padding: "0.45rem 0.6rem",
-                  background:
-                    "linear-gradient(135deg, var(--accent), rgba(59,130,246,0.9))",
-                  color: "#ffffff",
-                  fontSize: "0.8rem",
-                  fontWeight: 600,
-                  cursor: savingNewMatch ? "default" : "pointer",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "0.3rem",
-                  justifyContent: "center",
-                }}
-              >
-                <Icon name="magic" size={14} color="#ffffff" />
-                Inteligente
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowCustom((v) => !v)}
-                style={{
-                  flex: 1,
-                  borderRadius: "0.9rem",
-                  border: "1px solid var(--border)",
-                  padding: "0.45rem 0.6rem",
-                  background: "transparent",
-                  fontSize: "0.8rem",
-                  color: "var(--fg)",
-                  cursor: "pointer",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "0.3rem",
-                  justifyContent: "center",
-                }}
-              >
-                <Icon name="custom" size={14} color="var(--muted)" />
-                Personalizado
-              </button>
-            </div>
-
-            {showCustom && (
-              <div
-                style={{
-                  borderRadius: "0.9rem",
-                  padding: "0.5rem 0.55rem",
-                  background: "var(--bg)",
-                }}
-              >
-                <p
-                  style={{
-                    margin: 0,
-                    marginBottom: "0.35rem",
-                    fontSize: "0.78rem",
-                    color: "var(--muted)",
-                  }}
-                >
-                  Selecciona <strong>4 jugadores</strong>. La app te sugerirá el
-                  matchup más equilibrado según sus rangos.
-                </p>
-
+              {customSelected.length === 4 && (
                 <div
                   style={{
-                    display: "flex",
-                    flexWrap: "wrap",
-                    gap: "0.3rem",
+                    marginTop: "0.8rem",
+                    borderTop: "1px solid var(--border)",
+                    paddingTop: "0.55rem",
                   }}
                 >
-                  {[
-                    ...(Array.isArray(tournament.players)
-                      ? tournament.players
-                      : []),
-                    ...(Array.isArray(tournament.guestPlayers)
-                      ? tournament.guestPlayers.map(
-                          (_, idx) => `guest-${idx}`
-                        )
-                      : []),
-                  ].map((pid) => {
-                    const sel = customSelected.includes(pid);
-                    const p = getPlayerDisplay(pid);
-                    return (
-                      <button
-                        key={pid}
-                        type="button"
-                        onClick={() => toggleCustomPlayer(pid)}
-                        style={{
-                          borderRadius: "999px",
-                          border: sel
-                            ? "1px solid var(--accent)"
-                            : "1px solid var(--border)",
-                          padding: "0.25rem 0.5rem",
-                          background: sel
-                            ? "var(--accent-soft)"
-                            : "transparent",
-                          fontSize: "0.75rem",
-                          display: "flex",
-                          alignItems: "center",
-                          gap: "0.25rem",
-                          cursor: "pointer",
-                        }}
-                      >
-                        <span>
-                          {(p.name || "J")
-                            .split(" ")
-                            .map((x) => x[0])
-                            .join("")
-                            .slice(0, 2)
-                            .toUpperCase()}
-                        </span>
-                        <span
-                          style={{
-                            maxWidth: 110,
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
-                            whiteSpace: "nowrap",
-                            color: "var(--fg)",
-                          }}
-                        >
-                          {p.name}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-
-                {/* Preview del matchup antes de crear */}
-                {customSelected.length === 4 && (
-                  <div
-                    style={{
-                      marginTop: "0.45rem",
-                      padding: "0.45rem 0.5rem",
-                      borderRadius: "0.7rem",
-                      background: "var(--bg-elevated)",
-                      fontSize: "0.78rem",
-                    }}
-                  >
-                    <p
-                      style={{
-                        margin: 0,
-                        marginBottom: "0.25rem",
-                        fontWeight: 600,
-                      }}
-                    >
-                      Posible enfrentamiento:
-                    </p>
-                    {(() => {
-                      const [a, b, c, d] = customSelected;
-                      const combos = [
-                        { team1: [a, b], team2: [c, d] },
-                        { team1: [a, c], team2: [b, d] },
-                        { team1: [a, d], team2: [b, c] },
-                      ];
-
-                      const avgIdx = (team) =>
-                        team.reduce(
-                          (sum, id) =>
-                            sum +
-                            getDivisionIndex(
-                              playersMap[id]?.rank || "Bronce III"
-                            ),
-                          0
-                        ) / team.length;
-
-                      let best = combos[0];
-                      let bestDiff = Math.abs(
-                        avgIdx(best.team1) - avgIdx(best.team2)
-                      );
-
-                      for (let i = 1; i < combos.length; i++) {
-                        const diff = Math.abs(
-                          avgIdx(combos[i].team1) -
-                            avgIdx(combos[i].team2)
-                        );
-                        if (diff < bestDiff) {
-                          best = combos[i];
-                          bestDiff = diff;
-                        }
-                      }
-
-                      const t1Names = best.team1
-                        .map((id) => getPlayerDisplay(id).name)
-                        .join(" & ");
-                      const t2Names = best.team2
-                        .map((id) => getPlayerDisplay(id).name)
-                        .join(" & ");
-
-                      return (
-                        <>
-                          <p
-                            style={{
-                              margin: 0,
-                              marginBottom: "0.15rem",
-                              color: "var(--fg)",
-                            }}
-                          >
-                            {t1Names}
-                          </p>
-                          <p
-                            style={{
-                              margin: 0,
-                              marginBottom: "0.15rem",
-                              textAlign: "center",
-                              fontSize: "0.8rem",
-                              color: "var(--muted)",
-                            }}
-                          >
-                            VS
-                          </p>
-                          <p
-                            style={{
-                              margin: 0,
-                              marginBottom: "0.25rem",
-                              color: "var(--fg)",
-                            }}
-                          >
-                            {t2Names}
-                          </p>
-                        </>
-                      );
-                    })()}
-                    {customBalanceLabel && (
-                      <p
-                        style={{
-                          margin: 0,
-                          marginTop: "0.2rem",
-                          fontSize: "0.76rem",
-                          color: "var(--muted)",
-                        }}
-                      >
-                        {customBalanceLabel}
-                      </p>
-                    )}
-                  </div>
-                )}
-
-                <div
-                  style={{
-                    marginTop: "0.45rem",
-                    display: "flex",
-                    gap: "0.4rem",
-                  }}
-                >
-                  <button
-                    type="button"
-                    onClick={computeCustomBalance}
-                    style={{
-                      flex: 1,
-                      borderRadius: "0.9rem",
-                      border: "1px solid var(--border)",
-                      padding: "0.4rem 0.5rem",
-                      background: "transparent",
-                      fontSize: "0.78rem",
-                      color: "var(--fg)",
-                      cursor: "pointer",
-                    }}
-                  >
-                    Evaluar equilibrio
-                  </button>
-                  <button
-                    type="button"
-                    onClick={createCustomMatch}
-                    disabled={savingNewMatch}
-                    style={{
-                      flex: 1,
-                      borderRadius: "0.9rem",
-                      border: "none",
-                      padding: "0.4rem 0.5rem",
-                      background:
-                        "linear-gradient(135deg, var(--accent), rgba(59,130,246,0.9))",
-                      color: "#ffffff",
-                      fontSize: "0.78rem",
-                      fontWeight: 600,
-                      cursor: savingNewMatch ? "default" : "pointer",
-                    }}
-                  >
-                    {savingNewMatch ? "Creando..." : "Crear partido"}
-                  </button>
-                </div>
-
-                {customBalanceLabel && customSelected.length !== 4 && (
                   <p
                     style={{
                       margin: 0,
-                      marginTop: "0.35rem",
-                      fontSize: "0.76rem",
+                      marginBottom: "0.45rem",
+                      fontSize: "0.8rem",
                       color: "var(--muted)",
                     }}
                   >
-                    {customBalanceLabel}
+                    Vista previa del partido:
                   </p>
-                )}
-              </div>
-            )}
-          </section>
-        </>
-      )}
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: "0.8rem",
+                    }}
+                  >
+                    {/* Equipo 1 */}
+                    <div
+                      style={{
+                        flex: 1,
+                        minWidth: 0,
+                      }}
+                    >
+                      {renderTeamPlayersRow(customPreviewTeam1)}
+                    </div>
 
-      {/* TAB: RANKING */}
-      {activeTab === "ranking" && (
-        <section className="card">
-          <h2
+                    {/* VS */}
+                    <div
+                      style={{
+                        minWidth: 30,
+                        textAlign: "center",
+                        fontSize: "0.9rem",
+                        fontWeight: 700,
+                        color: "var(--muted)",
+                      }}
+                    >
+                      VS
+                    </div>
+
+                    {/* Equipo 2 */}
+                    <div
+                      style={{
+                        flex: 1,
+                        minWidth: 0,
+                      }}
+                    >
+                      {renderTeamPlayersRow(customPreviewTeam2)}
+                    </div>
+                  </div>
+
+                  {customPreviewLabel && (
+                    <p
+                      style={{
+                        margin: 0,
+                        marginTop: "0.4rem",
+                        fontSize: "0.78rem",
+                        color: "var(--muted)",
+                      }}
+                    >
+                      {customPreviewLabel}
+                    </p>
+                  )}
+                </div>
+              )}
+
+              <div
+                style={{
+                  marginTop: "0.6rem",
+                  display: "flex",
+                  flexWrap: "wrap",
+                  gap: "0.5rem",
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={createCustomMatch}
+                  disabled={savingNewMatch}
+                  style={{
+                    borderRadius: "0.8rem",
+                    border: "none",
+                    padding: "0.35rem 0.75rem",
+                    background:
+                      "linear-gradient(135deg, var(--accent), rgba(59,130,246,0.9))",
+                    fontSize: "0.8rem",
+                    cursor: savingNewMatch ? "default" : "pointer",
+                    fontWeight: 600,
+                    color: "#ffffff",
+                    boxShadow: "0 0 0 1px rgba(15,23,42,0.2)",
+                  }}                >
+                  {savingNewMatch ? "Creando..." : "Crear partido"}
+                </button>
+              </div>
+            </section>
+          )}
+        </section>
+
+        {/* PARTIDOS PENDIENTES */}
+        <section>
+          <div
             style={{
-              margin: 0,
+              display: "flex",
+              alignItems: "flex-end",
+              justifyContent: "space-between",
+              gap: "0.5rem",
               marginBottom: "0.4rem",
-              fontSize: "0.95rem",
             }}
           >
-            Ranking del torneo
-          </h2>
-          {tournamentRanking.length === 0 ? (
+            <h2
+              style={{
+                margin: 0,
+                fontSize: "0.95rem",
+              }}
+            >
+              Partidos pendientes
+            </h2>
+
+            {displayPendingMatches.length > 0 && (
+              <span
+                style={{
+                  fontSize: "0.7rem",
+                  color: "var(--muted)",
+                  textAlign: "right",
+                }}
+              >
+                Reacomoda la cola o manda un partido a cancha.
+              </span>
+            )}
+          </div>
+
+          {displayPendingMatches.length === 0 ? (
             <p
               style={{
                 margin: 0,
@@ -2102,7 +1823,7 @@ export default function TorneoJugar() {
                 color: "var(--muted)",
               }}
             >
-              El ranking se actualiza conforme se vayan completando partidos.
+              No hay partidos pendientes por jugar.
             </p>
           ) : (
             <div
@@ -2113,217 +1834,248 @@ export default function TorneoJugar() {
                 fontSize: "0.78rem",
               }}
             >
-              {tournamentRanking.map((r, index) => {
-                const info = playersMap[r.id];
-                const isGuest = r.id.startsWith("guest-");
-                const name = isGuest
-                  ? guestMap[r.id] || "Invitado"
-                  : info?.name ||
-                    (info?.email ? info.email.split("@")[0] : "Jugador");
-
-                const rankLabel = isGuest
-                  ? "Unranked"
-                  : info?.rank || "Bronce III";
-                const plLabel = isGuest
-                  ? "—"
-                  : typeof info?.leaguePoints === "number"
-                  ? `${info.leaguePoints} PL`
-                  : "0 PL";
-
-                return (
-                  <div
-                    key={r.id}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: "0.4rem",
-                      borderRadius: "0.8rem",
-                      padding: "0.35rem 0.4rem",
-                      background: "var(--bg)",
-                    }}
-                  >
-                    <div
-                      style={{
-                        width: 22,
-                        textAlign: "center",
-                        fontSize: "0.78rem",
-                        fontWeight: 700,
-                      }}
-                    >
-                      {index + 1}
-                    </div>
-                    <div
-                      style={{
-                        display: "flex",
-                        flexDirection: "column",
-                        flex: 1,
-                        minWidth: 0,
-                      }}
-                    >
-                      <span
-                        style={{
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          whiteSpace: "nowrap",
-                          color: "var(--fg)",
-                        }}
-                      >
-                        {name}
-                      </span>
-                      <span
-                        style={{
-                          fontSize: "0.7rem",
-                          color: "var(--muted)",
-                        }}
-                      >
-                        {rankLabel} • {plLabel}
-                      </span>
-                    </div>
-                    <div
-                      style={{
-                        textAlign: "right",
-                        fontSize: "0.7rem",
-                        color: "var(--muted)",
-                      }}
-                    >
-                      <div>
-                        {r.wins}W / {r.losses}L
-                        {r.draws ? ` / ${r.draws}D` : ""}
-                      </div>
-                      <div>Partidos: {r.matches}</div>
-                    </div>
-                  </div>
+              {displayPendingMatches.map((m) => {
+                const indexInSorted = sortedPendingMatches.findIndex(
+                  (x) => x.id === m.id
                 );
-              })}
-            </div>
-          )}
-        </section>
-      )}
-
-      {/* TAB: HISTORIAL */}
-      {activeTab === "historial" && (
-        <section className="card">
-          <h2
-            style={{
-              margin: 0,
-              marginBottom: "0.4rem",
-              fontSize: "0.95rem",
-            }}
-          >
-            Historial de partidos
-          </h2>
-          {completedMatches.length === 0 ? (
-            <p
-              style={{
-                margin: 0,
-                fontSize: "0.8rem",
-                color: "var(--muted)",
-              }}
-            >
-              Aquí aparecerán los partidos jugados en este torneo.
-            </p>
-          ) : (
-            <div
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                gap: "0.4rem",
-              }}
-            >
-              {completedMatches.map((m) => {
-                const t1 = (m.team1 || []).map((pid) =>
-                  getPlayerDisplay(pid)
-                );
-                const t2 = (m.team2 || []).map((pid) =>
-                  getPlayerDisplay(pid)
-                );
-                const scoreLabel =
-                  typeof m.scoreTeam1 === "number" &&
-                  typeof m.scoreTeam2 === "number"
-                    ? `${m.scoreTeam1} - ${m.scoreTeam2}`
-                    : "sin marcador";
-
-                const dateLabel = m.completedAt
-                  ? new Date(m.completedAt).toLocaleTimeString("es-MX", {
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })
-                  : "";
-
-                const t1Short = t1.map((p) => shortName(p.name)).join(" & ");
-                const t2Short = t2.map((p) => shortName(p.name)).join(" & ");
+                const pinnedCount = maxCourts >= 1 ? maxCourts : 0;
+                const canMoveUp = indexInSorted > pinnedCount;
+                const canMoveDown =
+                  indexInSorted >= 0 &&
+                  indexInSorted < sortedPendingMatches.length - 1;
 
                 return (
                   <div
                     key={m.id}
+                    className="card"
                     style={{
-                      borderRadius: "0.7rem",
-                      padding: "0.45rem 0.5rem",
-                      background: "var(--bg)",
-                      display: "flex",
-                      flexDirection: "column",
-                      gap: "0.2rem",
-                      fontSize: "0.78rem",
+                      padding: "0.55rem 0.7rem",
                     }}
                   >
                     <div
                       style={{
                         display: "flex",
                         alignItems: "center",
-                        justifyContent: "space-between",
-                        gap: "0.3rem",
+                        gap: "0.5rem",
                       }}
                     >
-                      <span
+                      {/* Equipo 1: pegado a la izquierda */}
+                      <div
                         style={{
                           flex: 1,
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          whiteSpace: "nowrap",
-                          color: "var(--fg)",
+                          minWidth: 0,
+                          textAlign: "left",
+                          paddingRight: "0.1rem",
                         }}
                       >
-                        {t1Short}
-                      </span>
-                      <span
+                        {(m.team1 || []).map((pid) => {
+                          const p = getPlayerDisplay(pid);
+                          return (
+                            <p
+                              key={pid}
+                              style={{
+                                margin: 0,
+                                fontSize: "0.82rem",
+                                fontWeight: 600,
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                                whiteSpace: "nowrap",
+                              }}
+                            >
+                              {shortName(p.name)}
+                            </p>
+                          );
+                        })}
+                      </div>
+
+                      {/* Controles al centro (misma altura que nombres) */}
+                      <div
                         style={{
-                          fontWeight: 600,
-                          minWidth: 48,
-                          textAlign: "center",
-                          color: "var(--fg)",
+                          display: "flex",
+                          flexDirection: "column",
+                          alignItems: "center",
+                          gap: "0.25rem",
+                          minWidth: 150,
+                          flexShrink: 0,
                         }}
                       >
-                        {scoreLabel}
-                      </span>
-                      <span
+                        <div
+                          style={{
+                            display: "flex",
+                            gap: "0.3rem",
+                            justifyContent: "center",
+                          }}
+                        >
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleMovePendingMatch(m.id, "up");
+                            }}
+                            disabled={reorderingPending || !canMoveUp}
+                            style={{
+                              minWidth: 36,
+                              height: 36,
+                              borderRadius: "999px",
+                              border: "1px solid rgba(34,197,94,0.7)",
+                              background: "rgba(22,163,74,0.12)",
+                              fontSize: "0.9rem",
+                              cursor:
+                                reorderingPending || !canMoveUp
+                                  ? "default"
+                                  : "pointer",
+                              color: "#16a34a",
+                            }}
+                          >
+                            ↑
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) =>
+                              handleDeletePendingMatch(m.id, e)
+                            }
+                            style={{
+                              minWidth: 36,
+                              height: 36,
+                              borderRadius: "999px",
+                              border: "1px solid rgba(248,113,113,0.8)",
+                              background: "rgba(248,113,113,0.15)",
+                              fontSize: "0.9rem",
+                              cursor: "pointer",
+                              color: "#ef4444",
+                            }}
+                          >
+                            🗑
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleMovePendingMatch(m.id, "down");
+                            }}
+                            disabled={reorderingPending || !canMoveDown}
+                            style={{
+                              minWidth: 36,
+                              height: 36,
+                              borderRadius: "999px",
+                              border: "1px solid rgba(249,115,22,0.8)",
+                              background: "rgba(249,115,22,0.15)",
+                              fontSize: "0.9rem",
+                              cursor:
+                                reorderingPending || !canMoveDown
+                                  ? "default"
+                                  : "pointer",
+                              color: "#ea580c",
+                            }}
+                          >
+                            ↓
+                          </button>
+                        </div>
+
+                        <div
+                          style={{
+                            display: "flex",
+                            gap: "0.25rem",
+                            justifyContent: "center",
+                            fontSize: "0.72rem",
+                          }}
+                        >
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handleSendPendingToCourt(m.id, 1)
+                          }
+                          style={{
+                            borderRadius: "999px",
+                            border: "none",
+                            padding: "0.25rem 0.75rem",
+                            background: "var(--accent)",
+                            color: "#ffffff",
+                            fontSize: "0.75rem",
+                            fontWeight: 600,
+                            cursor: "pointer",
+                          }}
+                        >
+                          Cancha 1
+                        </button>
+                        {maxCourts >= 2 && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              handleSendPendingToCourt(m.id, 2)
+                            }
+                            style={{
+                              borderRadius: "999px",
+                              border: "none",
+                              padding: "0.25rem 0.75rem",
+                              background: "var(--accent)",
+                              color: "#ffffff",
+                              fontSize: "0.75rem",
+                              fontWeight: 600,
+                              cursor: "pointer",
+                            }}
+                          >
+                            Cancha 2
+                          </button>
+                        )}
+                        </div>
+                      </div>
+
+                      {/* Equipo 2: pegado a la derecha */}
+                      <div
                         style={{
                           flex: 1,
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          whiteSpace: "nowrap",
+                          minWidth: 0,
                           textAlign: "right",
-                          color: "var(--fg)",
+                          paddingLeft: "0.1rem",
                         }}
                       >
-                        {t2Short}
-                      </span>
+                        {(m.team2 || []).map((pid) => {
+                          const p = getPlayerDisplay(pid);
+                          return (
+                            <p
+                              key={pid}
+                              style={{
+                                margin: 0,
+                                fontSize: "0.82rem",
+                                fontWeight: 600,
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                                whiteSpace: "nowrap",
+                              }}
+                            >
+                              {shortName(p.name)}
+                            </p>
+                          );
+                        })}
+                      </div>
                     </div>
+
+                    {/* Info extra */}
                     <div
                       style={{
+                        marginTop: "0.25rem",
                         display: "flex",
                         justifyContent: "space-between",
+                        alignItems: "center",
                         fontSize: "0.7rem",
                         color: "var(--muted)",
                       }}
                     >
                       <span>
                         {m.type === "smart"
-                          ? "Inteligente"
+                          ? "Partido inteligente"
                           : m.type === "custom"
-                          ? "Personalizado"
+                          ? "Partido personalizado"
                           : "Partido"}
                       </span>
-                      <span>{dateLabel}</span>
+                      <span>
+                        #
+                        {sortedPendingMatches.findIndex(
+                          (x) => x.id === m.id
+                        ) + 1}{" "}
+                        en la cola
+                      </span>
                     </div>
                   </div>
                 );
@@ -2331,380 +2083,263 @@ export default function TorneoJugar() {
             </div>
           )}
         </section>
-      )}
+      </div>
 
-      {/* Modal de costos */}
-      {showCostModal && (
+      {/* MODAL CONFLICTO JUGADORES EN DOS CANCHAS */}
+      {conflictModal && (
         <div
-          onClick={() => setShowCostModal(false)}
           style={{
             position: "fixed",
             inset: 0,
-            backgroundColor: "rgba(15,23,42,0.7)",
+            background: "rgba(0,0,0,0.45)",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
             zIndex: 50,
-            padding: "1rem",
           }}
+          onClick={() => setConflictModal(null)}
         >
           <div
-            onClick={(e) => e.stopPropagation()}
+            className="card"
             style={{
-              maxWidth: 420,
-              width: "100%",
-              borderRadius: "1rem",
-              background: "var(--bg-elevated)",
-              border: "1px solid var(--border)",
-              padding: "0.9rem 1rem",
-              fontSize: "0.82rem",
+              maxWidth: 360,
+              width: "90%",
+              padding: "0.9rem 1rem 0.8rem 1rem",
+              cursor: "default",
             }}
+            onClick={(e) => e.stopPropagation()}
           >
-            <h2
+            <h3
               style={{
                 margin: 0,
-                marginBottom: "0.5rem",
-                fontSize: "0.95rem",
+                marginBottom: "0.4rem",
+                fontSize: "0.9rem",
               }}
             >
-              Calcular costos de renta
-            </h2>
-
+              Jugadores en dos canchas
+            </h3>
             <p
               style={{
                 margin: 0,
-                marginBottom: "0.4rem",
-                fontSize: "0.78rem",
+                marginBottom: "0.45rem",
+                fontSize: "0.8rem",
                 color: "var(--muted)",
               }}
             >
-              Participantes en el torneo:{" "}
-              <strong>{totalParticipants}</strong>
+              El partido que intentas poner en la cancha{" "}
+              <strong>{conflictModal.courtIndex}</strong> tiene jugadores que
+              ya están jugando en la otra cancha:
             </p>
 
-            <label
+            <ul
               style={{
-                display: "block",
-                fontSize: "0.78rem",
-                marginBottom: "0.25rem",
-              }}
-            >
-              Costo por hora de una cancha
-            </label>
-            <input
-              type="number"
-              min="0"
-              step="0.01"
-              value={courtCostPerHour}
-              onChange={(e) => setCourtCostPerHour(e.target.value)}
-              placeholder="Ej. 400"
-              style={{
-                width: "100%",
-                borderRadius: "0.6rem",
-                border: "1px solid var(--border)",
-                padding: "0.35rem 0.45rem",
-                marginBottom: "0.5rem",
-                background: "var(--bg)",
-                color: "var(--fg)",
+                margin: "0 0 0.5rem 0",
+                paddingLeft: "1.1rem",
                 fontSize: "0.8rem",
               }}
-            />
-
-            <div
-              style={{
-                display: "flex",
-                gap: "0.5rem",
-                marginBottom: "0.4rem",
-                flexWrap: "wrap",
-              }}
             >
-              <div style={{ flex: 1, minWidth: 120 }}>
-                <label
-                  style={{
-                    display: "block",
-                    fontSize: "0.78rem",
-                    marginBottom: "0.25rem",
-                  }}
-                >
-                  Horas cancha 1
-                </label>
-                <input
-                  type="number"
-                  min="0"
-                  step="0.25"
-                  value={hoursCourt1}
-                  onChange={(e) => setHoursCourt1(e.target.value)}
-                  placeholder="Ej. 3"
-                  style={{
-                    width: "100%",
-                    borderRadius: "0.6rem",
-                    border: "1px solid var(--border)",
-                    padding: "0.35rem 0.45rem",
-                    background: "var(--bg)",
-                    color: "var(--fg)",
-                    fontSize: "0.8rem",
-                  }}
-                />
-              </div>
+              {conflictModal.conflictPlayers.map((pid) => {
+                const p = getPlayerDisplay(pid);
+                return <li key={pid}>{p.name}</li>;
+              })}
+            </ul>
 
-              {maxCourts >= 2 && (
-                <div style={{ flex: 1, minWidth: 120 }}>
-                  <label
-                    style={{
-                      display: "block",
-                      fontSize: "0.78rem",
-                      marginBottom: "0.25rem",
-                    }}
-                  >
-                    Horas cancha 2
-                  </label>
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.25"
-                    value={hoursCourt2}
-                    onChange={(e) => setHoursCourt2(e.target.value)}
-                    placeholder="Ej. 3"
-                    style={{
-                      width: "100%",
-                      borderRadius: "0.6rem",
-                      border: "1px solid var(--border)",
-                      padding: "0.35rem 0.45rem",
-                      background: "var(--bg)",
-                      color: "var(--fg)",
-                      fontSize: "0.8rem",
-                    }}
-                  />
-                </div>
-              )}
-            </div>
-
-            <div
-              style={{
-                display: "flex",
-                gap: "0.5rem",
-                marginTop: "0.35rem",
-              }}
-            >
-              <button
-                type="button"
-                onClick={handleCalculateCosts}
-                style={{
-                  flex: 1,
-                  borderRadius: "0.9rem",
-                  border: "none",
-                  padding: "0.45rem 0.6rem",
-                  background:
-                    "linear-gradient(135deg, var(--accent), rgba(59,130,246,0.9))",
-                  color: "#ffffff",
-                  fontSize: "0.8rem",
-                  fontWeight: 600,
-                  cursor: "pointer",
-                }}
-              >
-                Calcular
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowCostModal(false)}
-                style={{
-                  borderRadius: "0.9rem",
-                  border: "1px solid var(--border)",
-                  padding: "0.45rem 0.6rem",
-                  background: "transparent",
-                  fontSize: "0.8rem",
-                  color: "var(--muted)",
-                  cursor: "pointer",
-                }}
-              >
-                Cerrar
-              </button>
-            </div>
-
-            {costResult && (
+            {conflictModal.suggestedMatch ? (
               <div
                 style={{
-                  marginTop: "0.7rem",
-                  padding: "0.55rem 0.6rem",
-                  borderRadius: "0.75rem",
-                  background: "var(--bg)",
+                  marginBottom: "0.5rem",
                   fontSize: "0.8rem",
                 }}
               >
-                <p style={{ margin: 0, marginBottom: "0.25rem" }}>
-                  Horas totales:{" "}
-                  <strong>
-                    {costResult.totalHours.toFixed(2)} h
-                  </strong>
+                <p
+                  style={{
+                    margin: 0,
+                    marginBottom: "0.25rem",
+                    color: "var(--muted)",
+                  }}
+                >
+                  Te sugerimos este partido para esa cancha:
                 </p>
-                <p style={{ margin: 0, marginBottom: "0.25rem" }}>
-                  Costo total de renta:{" "}
-                  <strong>
-                    ${costResult.totalCost.toFixed(2)}
-                  </strong>
-                </p>
-                <p style={{ margin: 0 }}>
-                  A cada jugador ({costResult.count}) le toca:{" "}
-                  <strong>
-                    ${costResult.perPlayer.toFixed(2)}
-                  </strong>
+                <p
+                  style={{
+                    margin: 0,
+                    fontWeight: 600,
+                  }}
+                >
+                  {(conflictModal.suggestedMatch.team1 || [])
+                    .map((pid) => getPlayerDisplay(pid).name)
+                    .join(" & ")}{" "}
+                  vs{" "}
+                  {(conflictModal.suggestedMatch.team2 || [])
+                    .map((pid) => getPlayerDisplay(pid).name)
+                    .join(" & ")}
                 </p>
               </div>
+            ) : (
+              <p
+                style={{
+                  margin: 0,
+                  marginBottom: "0.5rem",
+                  fontSize: "0.8rem",
+                  color: "var(--muted)",
+                }}
+              >
+                No encontramos otro partido pendiente sin jugadores repetidos en
+                la otra cancha.
+              </p>
             )}
+
+            <div
+              style={{
+                display: "flex",
+                flexWrap: "wrap",
+                gap: "0.4rem",
+                justifyContent: "flex-end",
+                marginTop: "0.3rem",
+              }}
+            >
+              <button
+                type="button"
+                onClick={() => setConflictModal(null)}
+                style={{
+                  borderRadius: "999px",
+                  border: "1px solid var(--border)",
+                  padding: "0.3rem 0.7rem",
+                  background: "var(--bg)",
+                  fontSize: "0.78rem",
+                  cursor: "pointer",
+                }}
+              >
+                Cancelar
+              </button>
+
+              {conflictModal.suggestedMatch && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const { courtIndex, suggestedMatch } = conflictModal;
+                    setConflictModal(null);
+                    handleSendPendingToCourt(suggestedMatch.id, courtIndex);
+                  }}
+                  style={{
+                    borderRadius: "999px",
+                    border: "1px solid var(--accent)",
+                    padding: "0.3rem 0.7rem",
+                    background: "var(--accent-soft)",
+                    fontSize: "0.78rem",
+                    cursor: "pointer",
+                    fontWeight: 600,
+                  }}
+                >
+                  Usar partido sugerido
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={() => {
+                  setConflictModal(null);
+                  generateSmartMatch();
+                }}
+                style={{
+                  borderRadius: "999px",
+                  border: "1px solid var(--accent)",
+                  padding: "0.3rem 0.7rem",
+                  background: "var(--accent-soft)",
+                  fontSize: "0.78rem",
+                  cursor: "pointer",
+                  fontWeight: 600,
+                }}
+              >
+                Crear partido inteligente
+              </button>
+            </div>
+
+            <div
+              style={{
+                marginTop: "0.5rem",
+                borderTop: "1px solid var(--border)",
+                paddingTop: "0.4rem",
+                fontSize: "0.75rem",
+                color: "var(--muted)",
+              }}
+            >
+              <p
+                style={{
+                  margin: 0,
+                }}
+              >
+                El partido inteligente aparecerá en la lista de pendientes; luego
+                puedes mandarlo a esta cancha cuando no tenga jugadores
+                repetidos.
+              </p>
+            </div>
           </div>
         </div>
       )}
-
-      <style>{`
-        .card {
-          border-radius: 1rem;
-          padding: 0.8rem 0.9rem;
-          border: 1px solid var(--border);
-          background: var(--bg-elevated);
-        }
-      `}</style>
-    </div>
+    </>
   );
 }
 
 // -----------------------------------
-// Subcomponentes de UI
+// Componente auxiliar: selector 0–4
 // -----------------------------------
-
-function PlayerAvatar({ name, avatar }) {
-  return (
-    <div
-      style={{
-        width: 70,
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        gap: "0.25rem",
-      }}
-    >
-      <div
-        style={{
-          width: 64,
-          height: 64,
-          borderRadius: "999px",
-          overflow: "hidden",
-          background:
-            "radial-gradient(circle at 30% 20%, rgba(59,130,246,0.9), rgba(15,23,42,1))",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-        }}
-      >
-        {avatar ? (
-          <img
-            src={avatar}
-            alt={name}
-            style={{ width: "100%", height: "100%", objectFit: "cover" }}
-          />
-        ) : (
-          <span
-            style={{
-              fontSize: "1.2rem",
-              fontWeight: 700,
-              color: "#ffffff",
-            }}
-          >
-            {(name || "J")[0].toUpperCase()}
-          </span>
-        )}
-      </div>
-      <span
-        style={{
-          fontSize: "0.75rem",
-          color: "var(--fg)",
-          textAlign: "center",
-          maxWidth: 70,
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          whiteSpace: "nowrap",
-        }}
-      >
-        {name}
-      </span>
-    </div>
-  );
-}
-
 function ScoreNumberInput({ label, value, onChange }) {
-  const inc = () => {
-    if (value >= TOTAL_POINTS) return;
-    onChange(value + 1);
-  };
-
-  const dec = () => {
-    if (value <= 0) return;
-    onChange(value - 1);
-  };
+  const options = Array.from({ length: TOTAL_POINTS + 1 }, (_, i) => i);
 
   return (
     <div
       style={{
-        minWidth: 80,
-        textAlign: "center",
+        minWidth: 120,
       }}
     >
       <div
         style={{
           fontSize: "0.7rem",
           color: "var(--muted)",
-          marginBottom: "0.25rem",
+          marginBottom: "0.2rem",
+          textAlign: "center",
         }}
       >
         {label}
       </div>
       <div
         style={{
+          borderRadius: "1rem",
+          padding: "0.3rem 0.4rem",
+          border: "1px solid var(--border)",
+          background: "var(--bg-elevated)",
           display: "flex",
-          alignItems: "center",
-          gap: "0.25rem",
+          flexWrap: "wrap",
           justifyContent: "center",
+          gap: "0.25rem",
         }}
       >
-        <button
-          type="button"
-          onClick={dec}
-          style={{
-            width: 26,
-            height: 26,
-            borderRadius: "999px",
-            border: "1px solid var(--border)",
-            background: "var(--bg)",
-            fontSize: "0.9rem",
-            cursor: "pointer",
-          }}
-        >
-          –
-        </button>
-        <div
-          style={{
-            width: 40,
-            textAlign: "center",
-            fontSize: "1.1rem",
-            fontWeight: 700,
-          }}
-        >
-          {value}
-        </div>
-        <button
-          type="button"
-          onClick={inc}
-          style={{
-            width: 26,
-            height: 26,
-            borderRadius: "999px",
-            border: "1px solid var(--border)",
-            background: "var(--bg)",
-            fontSize: "0.9rem",
-            cursor: "pointer",
-          }}
-        >
-          +
-        </button>
+        {options.map((opt) => {
+          const active = value === opt;
+          return (
+          <button
+            key={opt}
+            type="button"
+            onClick={() => onChange(opt)}
+            style={{
+              minWidth: 26,
+              height: 26,
+              borderRadius: "999px",
+              border: active
+                ? "1px solid var(--accent)"
+                : "1px solid var(--border)",
+              background: active ? "var(--accent)" : "transparent",
+              fontSize: "0.8rem",
+              fontWeight: 600,
+              cursor: "pointer",
+              color: active ? "#ffffff" : "var(--fg)",
+            }}
+          >
+            {opt}
+          </button>
+          );
+        })}
       </div>
     </div>
   );

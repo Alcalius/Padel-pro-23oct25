@@ -199,7 +199,7 @@ export default function RootLayout() {
                 whiteSpace: "nowrap",
               }}
             >
-              V 0.3.4
+              V 0.4.1
             </span>
 
             {/* Tema */}
@@ -240,7 +240,7 @@ export default function RootLayout() {
       <main
         style={{
           flex: 1,
-          padding: "0.75rem 0.9rem 4.5rem", // espacio para la nav fija
+          padding: "0.75rem 0.9rem calc(5.6rem + env(safe-area-inset-bottom))",
           overflowY: "auto",
         }}
       >
