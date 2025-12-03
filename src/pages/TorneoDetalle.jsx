@@ -298,8 +298,8 @@ export default function TorneoDetalle() {
 
     const confirm = window.confirm(
       "Se crearán los partidos de final del Round Robin:\n\n" +
-        "• Final A: puestos 1 y 4 vs 2 y 3\n" +
-        "• Final B (opcional): puestos 5 y 8 vs 6 y 7 si hay al menos 8 jugadores.\n\n¿Continuar?"
+        "• Final A: puestos 1 y 2 vs 3 y 4\n" +
+        "• Final B (opcional): puestos 5 y 6 vs 7 y 8 si hay al menos 8 jugadores.\n\n¿Continuar?"
     );
 
     if (!confirm) return;
@@ -319,8 +319,8 @@ export default function TorneoDetalle() {
         type: "final",
         stage: "round_robin_final",
         status: "pending",
-        team1: [ranking[0].id, ranking[3].id],
-        team2: [ranking[1].id, ranking[2].id],
+        team1: [ranking[0].id, ranking[1].id],
+        team2: [ranking[2].id, ranking[3].id],
         createdAt: nowIso,
         label: "Final A (puestos 1-4)",
       });
@@ -332,8 +332,8 @@ export default function TorneoDetalle() {
           type: "final",
           stage: "round_robin_final",
           status: "pending",
-          team1: [ranking[4].id, ranking[7].id],
-          team2: [ranking[5].id, ranking[6].id],
+          team1: [ranking[4].id, ranking[5].id],
+          team2: [ranking[6].id, ranking[7].id],
           createdAt: nowIso,
           label: "Final B (puestos 5-8)",
         });
