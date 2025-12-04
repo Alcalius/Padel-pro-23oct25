@@ -514,7 +514,7 @@ export default function Home() {
     <>
       <div
         style={{
-          padding: "1.2rem 0.3rem 5.5rem",
+          padding: "0.2rem 0.3rem 5.5rem",
           maxWidth: 480,
           margin: "0 auto",
         }}

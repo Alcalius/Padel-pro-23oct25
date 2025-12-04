@@ -684,83 +684,91 @@ export default function TorneoJugar() {
       }
     });
 
-    const sorted = [...allIds].sort((a, b) => {
-      const ca = getPlayerMatchCount(a);
-      const cb = getPlayerMatchCount(b);
-      if (ca !== cb) return ca - cb;
-      const ia = getDivisionIndex(playersMap[a]?.rank || "Bronce III");
-      const ib = getDivisionIndex(playersMap[b]?.rank || "Bronce III");
-      return ia - ib;
-    });
+      const sorted = [...allIds].sort((a, b) => {
+        const ca = getPlayerMatchCount(a);
+        const cb = getPlayerMatchCount(b);
+        if (ca !== cb) return ca - cb;
+        const ia = getDivisionIndex(playersMap[a]?.rank || "Bronce III");
+        const ib = getDivisionIndex(playersMap[b]?.rank || "Bronce III");
+        return ia - ib;
+      });
 
-    const now = Date.now();
+      const now = Date.now();
+      let newMatches = [...matches];
 
-    let newMatches = [...matches];
+      if (maxCourts >= 2 && sorted.length >= 8) {
+        // 👉 2 canchas: tomamos a los 8 que menos han jugado
+        const base8 = sorted.slice(0, 8);
 
-    if (maxCourts >= 2 && sorted.length >= 8) {
-      // Crear 2 partidos con 8 jugadores
-      const group1 = sorted.slice(0, 4);
-      const group2 = sorted.slice(4, 8);
+        // Mezclamos un poco esos 8 para evitar bloques fijos
+        const shuffled8 = [...base8].sort(() => Math.random() - 0.5);
 
-      const best1 = buildBestTeams(
-        group1,
-        existingTeams,
-        existingMatchups,
-        playersMap
-      );
-      const best2 = buildBestTeams(
-        group2,
-        existingTeams,
-        existingMatchups,
-        playersMap
-      );
+        const group1 = shuffled8.slice(0, 4);
+        const group2 = shuffled8.slice(4, 8);
 
-      const newMatch1 = {
-        id: `match-${now}-${Math.random().toString(36).slice(2, 6)}`,
-        team1: best1.team1,
-        team2: best1.team2,
-        scoreTeam1: null,
-        scoreTeam2: null,
-        status: "pending",
-        createdAt: new Date(now).toISOString(),
-        type: "smart",
-      };
+        const best1 = buildBestTeams(
+          group1,
+          existingTeams,
+          existingMatchups,
+          playersMap
+        );
+        const best2 = buildBestTeams(
+          group2,
+          existingTeams,
+          existingMatchups,
+          playersMap
+        );
 
-      const newMatch2 = {
-        id: `match-${now + 1}-${Math.random().toString(36).slice(2, 6)}`,
-        team1: best2.team1,
-        team2: best2.team2,
-        scoreTeam1: null,
-        scoreTeam2: null,
-        status: "pending",
-        createdAt: new Date(now + 1).toISOString(),
-        type: "smart",
-      };
+        const newMatch1 = {
+          id: `match-${now}-${Math.random().toString(36).slice(2, 6)}`,
+          team1: best1.team1,
+          team2: best1.team2,
+          scoreTeam1: null,
+          scoreTeam2: null,
+          status: "pending",
+          createdAt: new Date(now).toISOString(),
+          type: "smart",
+        };
 
-      newMatches = [...matches, newMatch1, newMatch2];
-    } else {
-      // Solo 1 partido
-      const base4 = sorted.slice(0, 4);
-      const best = buildBestTeams(
-        base4,
-        existingTeams,
-        existingMatchups,
-        playersMap
-      );
+        const newMatch2 = {
+          id: `match-${now + 1}-${Math.random().toString(36).slice(2, 6)}`,
+          team1: best2.team1,
+          team2: best2.team2,
+          scoreTeam1: null,
+          scoreTeam2: null,
+          status: "pending",
+          createdAt: new Date(now + 1).toISOString(),
+          type: "smart",
+        };
 
-      const newMatch = {
-        id: `match-${now}-${Math.random().toString(36).slice(2, 8)}`,
-        team1: best.team1,
-        team2: best.team2,
-        scoreTeam1: null,
-        scoreTeam2: null,
-        status: "pending",
-        createdAt: new Date(now).toISOString(),
-        type: "smart",
-      };
+        newMatches = [...matches, newMatch1, newMatch2];
+      } else {
+        // 👉 1 cancha: tomamos un pool de hasta 6 y mezclamos
+        const candidateCount = Math.min(sorted.length, 6);
+        const pool = sorted.slice(0, candidateCount);
+        const shuffled = [...pool].sort(() => Math.random() - 0.5);
+        const base4 = shuffled.slice(0, 4);
 
-      newMatches = [...matches, newMatch];
-    }
+        const best = buildBestTeams(
+          base4,
+          existingTeams,
+          existingMatchups,
+          playersMap
+        );
+
+        const newMatch = {
+          id: `match-${now}-${Math.random().toString(36).slice(2, 8)}`,
+          team1: best.team1,
+          team2: best.team2,
+          scoreTeam1: null,
+          scoreTeam2: null,
+          status: "pending",
+          createdAt: new Date(now).toISOString(),
+          type: "smart",
+        };
+
+        newMatches = [...matches, newMatch];
+      }
 
     setSavingNewMatch(true);
     try {
@@ -1042,9 +1050,11 @@ export default function TorneoJugar() {
     <div
       style={{
         display: "flex",
-        flexWrap: "wrap",
+        flexWrap: "nowrap",          
         justifyContent: "center",
-        gap: "0.7rem",
+        gap: "0.6rem",
+        maxWidth: "100%",
+        overflow: "hidden",
       }}
     >
       {playerIds.map((pid) => {
@@ -1056,7 +1066,8 @@ export default function TorneoJugar() {
               display: "flex",
               flexDirection: "column",
               alignItems: "center",
-              gap: "0.2rem",
+              gap: "0.15rem",
+              minWidth: 64,          
             }}
           >
             <div
@@ -1810,7 +1821,7 @@ export default function TorneoJugar() {
                   textAlign: "right",
                 }}
               >
-                Reacomoda la cola o manda un partido a cancha.
+                Ajusta la cola aquí. 
               </span>
             )}
           </div>
@@ -1843,6 +1854,10 @@ export default function TorneoJugar() {
                 const canMoveDown =
                   indexInSorted >= 0 &&
                   indexInSorted < sortedPendingMatches.length - 1;
+                const queuePosition =
+                  indexInSorted >= pinnedCount
+                    ? indexInSorted - pinnedCount + 1
+                    : 1;
 
                 return (
                   <div
@@ -1899,6 +1914,7 @@ export default function TorneoJugar() {
                           flexShrink: 0,
                         }}
                       >
+                        {/* Botones ↑ 🗑 ↓ */}
                         <div
                           style={{
                             display: "flex",
@@ -1971,54 +1987,6 @@ export default function TorneoJugar() {
                             ↓
                           </button>
                         </div>
-
-                        <div
-                          style={{
-                            display: "flex",
-                            gap: "0.25rem",
-                            justifyContent: "center",
-                            fontSize: "0.72rem",
-                          }}
-                        >
-                        <button
-                          type="button"
-                          onClick={() =>
-                            handleSendPendingToCourt(m.id, 1)
-                          }
-                          style={{
-                            borderRadius: "999px",
-                            border: "none",
-                            padding: "0.25rem 0.75rem",
-                            background: "var(--accent)",
-                            color: "#ffffff",
-                            fontSize: "0.75rem",
-                            fontWeight: 600,
-                            cursor: "pointer",
-                          }}
-                        >
-                          Cancha 1
-                        </button>
-                        {maxCourts >= 2 && (
-                          <button
-                            type="button"
-                            onClick={() =>
-                              handleSendPendingToCourt(m.id, 2)
-                            }
-                            style={{
-                              borderRadius: "999px",
-                              border: "none",
-                              padding: "0.25rem 0.75rem",
-                              background: "var(--accent)",
-                              color: "#ffffff",
-                              fontSize: "0.75rem",
-                              fontWeight: 600,
-                              cursor: "pointer",
-                            }}
-                          >
-                            Cancha 2
-                          </button>
-                        )}
-                        </div>
                       </div>
 
                       {/* Equipo 2: pegado a la derecha */}
@@ -2051,30 +2019,88 @@ export default function TorneoJugar() {
                       </div>
                     </div>
 
-                    {/* Info extra */}
+                    {/* Fila inferior: tipo de partido, botones de cancha y posición en cola */}
                     <div
                       style={{
                         marginTop: "0.25rem",
                         display: "flex",
-                        justifyContent: "space-between",
                         alignItems: "center",
                         fontSize: "0.7rem",
                         color: "var(--muted)",
+                        gap: "0.4rem",
                       }}
                     >
-                      <span>
+                      {/* Izquierda: tipo (texto corto para ahorrar espacio) */}
+                      <span
+                        style={{
+                          flex: 1,
+                          textAlign: "left",
+                        }}
+                      >
                         {m.type === "smart"
-                          ? "Partido inteligente"
+                          ? "Inteligente"
                           : m.type === "custom"
-                          ? "Partido personalizado"
+                          ? "Personalizado"
                           : "Partido"}
                       </span>
-                      <span>
-                        #
-                        {sortedPendingMatches.findIndex(
-                          (x) => x.id === m.id
-                        ) + 1}{" "}
-                        en la cola
+
+                      {/* Centro: botones de cancha, realmente centrados */}
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          gap: "0.3rem",
+                          flexShrink: 0,
+                        }}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => handleSendPendingToCourt(m.id, 1)}
+                          style={{
+                            borderRadius: "999px",
+                            border: "none",
+                            padding: "0.2rem 0.8rem",
+                            background: "var(--accent)",
+                            color: "#ffffff",
+                            fontSize: "0.75rem",
+                            fontWeight: 600,
+                            cursor: "pointer",
+                          }}
+                        >
+                          Cancha 1
+                        </button>
+                        {maxCourts >= 2 && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              handleSendPendingToCourt(m.id, 2)
+                            }
+                            style={{
+                              borderRadius: "999px",
+                              border: "none",
+                              padding: "0.2rem 0.8rem",
+                              background: "var(--accent)",
+                              color: "#ffffff",
+                              fontSize: "0.75rem",
+                              fontWeight: 600,
+                              cursor: "pointer",
+                            }}
+                          >
+                            Cancha 2
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Derecha: # en la cola */}
+                      <span
+                        style={{
+                          flex: 1,
+                          textAlign: "right",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        #{queuePosition} en la cola
                       </span>
                     </div>
                   </div>

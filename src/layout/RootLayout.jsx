@@ -118,9 +118,13 @@ export default function RootLayout() {
           padding: "0.6rem 0.9rem",
           borderBottom: "1px solid var(--border)",
           background: "var(--bg-elevated)",
-          position: "sticky",
+          position: "fixed",
           top: 0,
-          zIndex: 30,
+          left: "50%",
+          transform: "translateX(-50%)",
+          width: "100%",
+          maxWidth: 480,
+          zIndex: 50,
         }}
       >
         <div
@@ -199,7 +203,7 @@ export default function RootLayout() {
                 whiteSpace: "nowrap",
               }}
             >
-              V 0.4.1
+              V 0.5.0
             </span>
 
             {/* Tema */}
@@ -240,7 +244,8 @@ export default function RootLayout() {
       <main
         style={{
           flex: 1,
-          padding: "0.75rem 0.9rem calc(5.6rem + env(safe-area-inset-bottom))",
+          padding:
+            "4.1rem 0.9rem calc(5.6rem + env(safe-area-inset-bottom))",
           overflowY: "auto",
         }}
       >

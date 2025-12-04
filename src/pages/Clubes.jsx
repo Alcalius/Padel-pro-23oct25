@@ -1040,33 +1040,53 @@ export default function Clubes() {
                       </p>
                     </div>
 
-                    <div
-                      style={{
-                        display: "flex",
-                        flexDirection: "column",
-                        alignItems: "flex-end",
-                        gap: "0.2rem",
-                      }}
-                    >
-                      {isActive && (
-                        <span
-                          style={{
-                            fontSize: "0.7rem",
-                            padding: "0.1rem 0.4rem",
-                            borderRadius: "999px",
-                            border: "1px solid var(--accent)",
-                            color: "var(--accent)",
-                          }}
-                        >
-                          Activo
-                        </span>
-                      )}
-                      <Icon
-                        name={isSelected ? "chevron-down" : "chevron-right"}
-                        size={16}
-                        color="var(--muted)"
-                      />
-                    </div>
+                      <div
+                        style={{
+                          display: "flex",
+                          flexDirection: "column",
+                          alignItems: "flex-end",
+                          gap: "0.2rem",
+                        }}
+                      >
+                        {isActive ? (
+                          <span
+                            style={{
+                              fontSize: "0.7rem",
+                              padding: "0.1rem 0.4rem",
+                              borderRadius: "999px",
+                              border: "1px solid var(--accent)",
+                              color: "var(--accent)",
+                            }}
+                          >
+                            Activo
+                          </span>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation(); // para que no solo cambie selección sino también active
+                              handleSetActiveClub(club.id);
+                            }}
+                            style={{
+                              fontSize: "0.7rem",
+                              padding: "0.15rem 0.55rem",
+                              borderRadius: "999px",
+                              border: "1px solid var(--border)",
+                              background: "var(--bg)",
+                              color: "var(--fg)",
+                              cursor: "pointer",
+                            }}
+                          >
+                            Activar
+                          </button>
+                        )}
+
+                        <Icon
+                          name={isSelected ? "chevron-down" : "chevron-right"}
+                          size={16}
+                          color="var(--muted)"
+                        />
+                      </div>
                   </div>
                 </article>
               );

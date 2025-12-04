@@ -293,122 +293,189 @@ export default function Torneos() {
   // -----------------------------
   // Generación de partidos con aleatoriedad
   // -----------------------------
-  const generateInitialMatches = (playerIds, desiredMatchCount) => {
-    if (!Array.isArray(playerIds) || playerIds.length < 4) return [];
+const generateInitialMatches = (playerIds, desiredMatchCount) => {
+  if (!Array.isArray(playerIds) || playerIds.length < 4) return [];
 
-    const matchCount = Math.max(1, desiredMatchCount || 1);
+  const matchCount = Math.max(1, desiredMatchCount || 1);
 
-    // Aleatorizar orden base para que "recalcular" cambie emparejamientos
-    const players = [...playerIds].sort(() => Math.random() - 0.5);
+  // Mezcla base para que cada "recalcular" tenga orden diferente
+  const players = [...playerIds].sort(() => Math.random() - 0.5);
 
-    const stats = {};
-    players.forEach((id) => {
-      stats[id] = { matches: 0, last: -1 };
-    });
+  // Stats por jugador (solo contamos partidos de este torneo)
+  const stats = {};
+  players.forEach((id) => {
+    stats[id] = { matches: 0 };
+  });
 
-    const teammateCounts = {};
-    const opponentCounts = {};
+  // Contadores de compañeros y rivales para dar variedad
+  const teammateCounts = {};
+  const opponentCounts = {};
 
-    const pairKey = (a, b) => (a < b ? `${a}|${b}` : `${b}|${a}`);
+  const pairKey = (a, b) => (a < b ? `${a}|${b}` : `${b}|${a}`);
 
-    const addTeammates = (team) => {
+  const addTeammates = (team) => {
+    for (let i = 0; i < team.length; i++) {
+      for (let j = i + 1; j < team.length; j++) {
+        const key = pairKey(team[i], team[j]);
+        teammateCounts[key] = (teammateCounts[key] || 0) + 1;
+      }
+    }
+  };
+
+  const addOpponents = (team1, team2) => {
+    for (const a of team1) {
+      for (const b of team2) {
+        const key = pairKey(a, b);
+        opponentCounts[key] = (opponentCounts[key] || 0) + 1;
+      }
+    }
+  };
+
+  // Coste de repetir compañeros/contrincantes
+  const repetitionCost = (team1, team2) => {
+    let cost = 0;
+
+    const addTeamCost = (team) => {
       for (let i = 0; i < team.length; i++) {
         for (let j = i + 1; j < team.length; j++) {
           const key = pairKey(team[i], team[j]);
-          teammateCounts[key] = (teammateCounts[key] || 0) + 3;
+          cost += (teammateCounts[key] || 0) * 3; // pesar más repetir equipo
         }
       }
     };
 
-    const addOpponents = (team1, team2) => {
-      for (const a of team1) {
-        for (const b of team2) {
-          const key = pairKey(a, b);
-          opponentCounts[key] = (opponentCounts[key] || 0) + 1;
-        }
+    addTeamCost(team1);
+    addTeamCost(team2);
+
+    for (const a of team1) {
+      for (const b of team2) {
+        const key = pairKey(a, b);
+        cost += (opponentCounts[key] || 0) * 1; // repetir rivales pesa menos
       }
-    };
-
-    const costTeams = (team1, team2) => {
-      let cost = 0;
-
-      const addTeamCost = (team) => {
-        for (let i = 0; i < team.length; i++) {
-          for (let j = i + 1; j < team.length; j++) {
-            const key = pairKey(team[i], team[j]);
-            cost += (teammateCounts[key] || 0) * 3;
-          }
-        }
-      };
-
-      addTeamCost(team1);
-      addTeamCost(team2);
-
-      for (const a of team1) {
-        for (const b of team2) {
-          const key = pairKey(a, b);
-          cost += (opponentCounts[key] || 0) * 1;
-        }
-      }
-
-      return cost;
-    };
-
-    const matches = [];
-
-    for (let matchIndex = 0; matchIndex < matchCount; matchIndex++) {
-      const sorted = [...players].sort((a, b) => {
-        const sa = stats[a];
-        const sb = stats[b];
-        if (sa.matches !== sb.matches) return sa.matches - sb.matches;
-        return sa.last - sb.last;
-      });
-
-      const candidates = sorted.slice(0, 4);
-      if (candidates.length < 4) break;
-
-      const [p1, p2, p3, p4] = candidates;
-
-      const options = [
-        { team1: [p1, p2], team2: [p3, p4] },
-        { team1: [p1, p3], team2: [p2, p4] },
-        { team1: [p1, p4], team2: [p2, p3] },
-      ];
-
-      let bestOpt = options[0];
-      let bestCost = costTeams(options[0].team1, options[0].team2);
-
-      for (let i = 1; i < options.length; i++) {
-        const c = costTeams(options[i].team1, options[i].team2);
-        if (c < bestCost) {
-          bestCost = c;
-          bestOpt = options[i];
-        }
-      }
-
-      matches.push({
-        id: `match-${Date.now()}-${matchIndex}-${Math.random()
-          .toString(36)
-          .slice(2, 8)}`,
-        team1: bestOpt.team1,
-        team2: bestOpt.team2,
-        scoreTeam1: null,
-        scoreTeam2: null,
-        status: "pending",
-        createdAt: new Date().toISOString(),
-      });
-
-      for (const pid of [...bestOpt.team1, ...bestOpt.team2]) {
-        stats[pid].matches++;
-        stats[pid].last = matchIndex;
-      }
-      addTeammates(bestOpt.team1);
-      addTeammates(bestOpt.team2);
-      addOpponents(bestOpt.team1, bestOpt.team2);
     }
 
-    return matches;
+    return cost;
   };
+
+  // Coste de "fairness": diferencia entre el que más y el que menos partidos tendría
+  const fairnessCostForGroup = (group) => {
+    let minMatches = Infinity;
+    let maxMatches = -Infinity;
+
+    players.forEach((id) => {
+      const base = stats[id].matches || 0;
+      const next = base + (group.includes(id) ? 1 : 0);
+      if (next < minMatches) minMatches = next;
+      if (next > maxMatches) maxMatches = next;
+    });
+
+    return maxMatches - minMatches; // idealmente 0 o 1
+  };
+
+  const matches = [];
+
+  for (let matchIndex = 0; matchIndex < matchCount; matchIndex++) {
+    // Ordenamos por partidos jugados (fairness muy fuerte aquí)
+    const sortedByMatches = [...players].sort((a, b) => {
+      const ma = stats[a].matches;
+      const mb = stats[b].matches;
+      if (ma !== mb) return ma - mb;
+      return 0; // dejamos el orden aleatorio inicial para romper empates
+    });
+
+    // Pool de candidatos: los que menos partidos llevan (hasta 8)
+    const poolSize = Math.min(sortedByMatches.length, 8);
+    const pool = sortedByMatches.slice(0, poolSize);
+
+    if (pool.length < 4) break;
+
+    let bestChoice = null;
+    let bestTotalCost = Infinity;
+
+    // Probamos todas las combinaciones de 4 dentro del pool
+    for (let i = 0; i < pool.length - 3; i++) {
+      for (let j = i + 1; j < pool.length - 2; j++) {
+        for (let k = j + 1; k < pool.length - 1; k++) {
+          for (let l = k + 1; l < pool.length; l++) {
+            const group = [pool[i], pool[j], pool[k], pool[l]];
+
+            const fairness = fairnessCostForGroup(group);
+
+            // Evitamos, en lo posible, combinaciones que creen diferencia > 1
+            // (pero si no hay otra opción, las permitimos)
+            const fairnessWeight = 10; // peso fuerte para fairness
+
+            // Ahora miramos cómo formar los equipos dentro de este grupo
+            const [a, b, c, d] = group;
+            const options = [
+              { team1: [a, b], team2: [c, d] },
+              { team1: [a, c], team2: [b, d] },
+              { team1: [a, d], team2: [b, c] },
+            ];
+
+            let bestForGroup = options[0];
+            let bestRepCost = repetitionCost(
+              options[0].team1,
+              options[0].team2
+            );
+
+            for (let optIdx = 1; optIdx < options.length; optIdx++) {
+              const opt = options[optIdx];
+              const rep = repetitionCost(opt.team1, opt.team2);
+              if (rep < bestRepCost) {
+                bestRepCost = rep;
+                bestForGroup = opt;
+              }
+            }
+
+            const totalCost = fairness * fairnessWeight + bestRepCost;
+
+            if (
+              totalCost < bestTotalCost ||
+              // Si el fairness es mejor, preferimos ese incluso con coste similar
+              (fairness < (bestChoice?.fairness ?? Infinity) &&
+                fairness <= 1)
+            ) {
+              bestTotalCost = totalCost;
+              bestChoice = {
+                team1: bestForGroup.team1,
+                team2: bestForGroup.team2,
+                fairness,
+              };
+            }
+          }
+        }
+      }
+    }
+
+    if (!bestChoice) break;
+
+    const matchId = `match-${Date.now()}-${matchIndex}-${Math.random()
+      .toString(36)
+      .slice(2, 8)}`;
+
+    matches.push({
+      id: matchId,
+      team1: bestChoice.team1,
+      team2: bestChoice.team2,
+      scoreTeam1: null,
+      scoreTeam2: null,
+      status: "pending",
+      createdAt: new Date().toISOString(),
+    });
+
+    // Actualizamos stats y contadores de compañeros/rivales
+    [...bestChoice.team1, ...bestChoice.team2].forEach((pid) => {
+      stats[pid].matches += 1;
+    });
+
+    addTeammates(bestChoice.team1);
+    addTeammates(bestChoice.team2);
+    addOpponents(bestChoice.team1, bestChoice.team2);
+  }
+
+  return matches;
+};
 
   // -----------------------------
   // Vista previa -> abre modal
