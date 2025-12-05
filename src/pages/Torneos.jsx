@@ -626,20 +626,264 @@ const generateInitialMatches = (playerIds, desiredMatchCount) => {
       ? ((form.matchCount * 4) / totalPlayersForm).toFixed(1)
       : "0.0";
 
-  if (loading) {
-    return (
-      <div
-        style={{
-          padding: "1rem",
-          paddingBottom: "0.75rem",
-          fontSize: "0.9rem",
-          color: "var(--muted)",
-        }}
-      >
-        Cargando torneos...
-      </div>
-    );
-  }
+    if (loading) {
+      return (
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: "1rem",
+            paddingBottom: "0.75rem",
+          }}
+        >
+          {/* HEADER SKELETON */}
+          <section
+            style={{
+              borderRadius: "1.2rem",
+              padding: "1rem 1.1rem",
+              border: "1px solid var(--border)",
+              background: "var(--bg-elevated)",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "0.7rem",
+                marginBottom: "0.6rem",
+              }}
+            >
+              <div
+                className="skeleton"
+                style={{
+                  width: 40,
+                  height: 40,
+                  borderRadius: "1rem",
+                }}
+              />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div
+                  className="skeleton"
+                  style={{
+                    height: 14,
+                    width: "40%",
+                    borderRadius: 999,
+                    marginBottom: 8,
+                  }}
+                />
+                <div
+                  className="skeleton"
+                  style={{
+                    height: 10,
+                    width: "80%",
+                    borderRadius: 999,
+                    marginBottom: 6,
+                  }}
+                />
+                <div
+                  className="skeleton"
+                  style={{
+                    height: 10,
+                    width: "60%",
+                    borderRadius: 999,
+                  }}
+                />
+              </div>
+            </div>
+
+            <div
+              style={{
+                display: "flex",
+                gap: "0.5rem",
+                marginTop: "0.5rem",
+              }}
+            >
+              <div
+                className="skeleton"
+                style={{
+                  flex: 1,
+                  height: 32,
+                  borderRadius: 999,
+                }}
+              />
+              <div
+                className="skeleton"
+                style={{
+                  flex: 1,
+                  height: 32,
+                  borderRadius: 999,
+                }}
+              />
+            </div>
+          </section>
+
+          {/* LISTA DE TORNEOS ACTIVOS SKELETON */}
+          <section>
+            <div
+              className="skeleton"
+              style={{
+                height: 14,
+                width: 120,
+                borderRadius: 999,
+                marginBottom: "0.5rem",
+              }}
+            />
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: "0.6rem",
+              }}
+            >
+              {[1, 2].map((i) => (
+                <article
+                  key={i}
+                  style={{
+                    borderRadius: "0.9rem",
+                    border: "1px solid var(--border)",
+                    padding: "0.65rem 0.7rem",
+                    background: "var(--bg-elevated)",
+                  }}
+                >
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "0.55rem",
+                    }}
+                  >
+                    <div
+                      className="skeleton"
+                      style={{
+                        width: 30,
+                        height: 30,
+                        borderRadius: "0.8rem",
+                        flexShrink: 0,
+                      }}
+                    />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div
+                        className="skeleton"
+                        style={{
+                          height: 12,
+                          width: "70%",
+                          borderRadius: 999,
+                          marginBottom: 6,
+                        }}
+                      />
+                      <div
+                        className="skeleton"
+                        style={{
+                          height: 10,
+                          width: "90%",
+                          borderRadius: 999,
+                        }}
+                      />
+                    </div>
+                    <div
+                      className="skeleton"
+                      style={{
+                        width: 70,
+                        height: 26,
+                        borderRadius: 999,
+                        flexShrink: 0,
+                      }}
+                    />
+                  </div>
+                </article>
+              ))}
+            </div>
+          </section>
+
+          {/* BLOQUE COMPLETADOS SKELETON */}
+          <section>
+            <div
+              className="skeleton"
+              style={{
+                height: 14,
+                width: 140,
+                borderRadius: 999,
+                marginBottom: "0.5rem",
+              }}
+            />
+            <div
+              style={{
+                borderRadius: "0.9rem",
+                border: "1px solid var(--border)",
+                padding: "0.6rem 0.7rem",
+                background: "var(--bg-elevated)",
+                display: "flex",
+                alignItems: "center",
+                gap: "0.6rem",
+              }}
+            >
+              <div
+                className="skeleton"
+                style={{
+                  width: 26,
+                  height: 26,
+                  borderRadius: "0.8rem",
+                  flexShrink: 0,
+                }}
+              />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div
+                  className="skeleton"
+                  style={{
+                    height: 12,
+                    width: "60%",
+                    borderRadius: 999,
+                    marginBottom: 6,
+                  }}
+                />
+                <div
+                  className="skeleton"
+                  style={{
+                    height: 10,
+                    width: "80%",
+                    borderRadius: 999,
+                  }}
+                />
+              </div>
+              <div
+                className="skeleton"
+                style={{
+                  width: 90,
+                  height: 26,
+                  borderRadius: 999,
+                  flexShrink: 0,
+                }}
+              />
+            </div>
+          </section>
+
+          {/* Estilos del skeleton */}
+          <style>{`
+            .skeleton {
+              position: relative;
+              overflow: hidden;
+              background: linear-gradient(
+                90deg,
+                rgba(148, 163, 184, 0.22),
+                rgba(148, 163, 184, 0.35),
+                rgba(148, 163, 184, 0.22)
+              );
+              background-size: 200% 100%;
+              animation: shimmer 1.3s infinite;
+            }
+
+            @keyframes shimmer {
+              0% {
+                background-position: -200% 0;
+              }
+              100% {
+                background-position: 200% 0;
+              }
+            }
+          `}</style>
+        </div>
+      );
+    }
 
   const hasActiveClub = !!activeClubId;
 
