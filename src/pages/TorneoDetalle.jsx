@@ -20,6 +20,8 @@ export default function TorneoDetalle() {
   const [successMsg, setSuccessMsg] = useState("");
   const [activeTab, setActiveTab] = useState("summary"); // summary | ranking | history
   const [creatingFinal, setCreatingFinal] = useState(false);
+  const [isClubAdmin, setIsClubAdmin] = useState(false);
+
 
   // Modal calcular costos
   const [showCostModal, setShowCostModal] = useState(false);
@@ -100,12 +102,47 @@ export default function TorneoDetalle() {
     loadPlayersInfo();
   }, [tournament]);
 
+    // Comprobar si el usuario es admin del club del torneo
+  useEffect(() => {
+    const checkClubAdmin = async () => {
+      if (!tournament?.clubId || !userId) {
+        setIsClubAdmin(false);
+        return;
+      }
+
+      try {
+        const clubRef = doc(db, "clubs", tournament.clubId);
+        const clubSnap = await getDoc(clubRef);
+
+        if (!clubSnap.exists()) {
+          setIsClubAdmin(false);
+          return;
+        }
+
+        const clubData = clubSnap.data();
+        // Admin del club = usuario que creó el club
+        setIsClubAdmin(clubData.createdBy === userId);
+      } catch (err) {
+        console.error("Error comprobando admin del club:", err);
+        setIsClubAdmin(false);
+      }
+    };
+
+    checkClubAdmin();
+  }, [tournament, userId]);
+
+
   const hasTournament = !!tournament;
 
   const isCreator = useMemo(() => {
     if (!tournament || !userId) return false;
     return tournament.createdBy === userId;
   }, [tournament, userId]);
+
+    const canManageTournament = useMemo(
+    () => isCreator || isClubAdmin,
+    [isCreator, isClubAdmin]
+  );
 
 
   const statusLabel = useMemo(() => {
@@ -284,8 +321,10 @@ export default function TorneoDetalle() {
   const handleCreateFinalRoundRobin = async () => {
     if (!tournament || !stats?.ranking?.length) return;
 
-    if (!isCreator) {
-      setErrorMsg("Solo el creador del torneo puede crear la final.");
+    if (!canManageTournament) {
+      setErrorMsg(
+        "Solo el creador del torneo o el admin del club pueden crear la final."
+      );
       return;
     }
 
@@ -381,7 +420,7 @@ export default function TorneoDetalle() {
   };
 
   const handleCompleteTournament = async () => {
-    if (!tournament || !isCreator) return;
+    if (!tournament || !canManageTournament) return;
 
     const confirm = window.confirm(
       "¿Marcar este torneo como completado?\n\nLuego podrás seguir viendo el ranking, pero ya no podrás editar los partidos."
@@ -619,7 +658,7 @@ export default function TorneoDetalle() {
             Jugar
           </button>
 
-          {tournament.status === "active" && isCreator && (
+          {tournament.status === "active" && canManageTournament && (
             <button
               type="button"
               onClick={handleCompleteTournament}
@@ -1035,7 +1074,7 @@ export default function TorneoDetalle() {
           gap: "0.4rem",
         }}
       >
-        {isCreator && stats?.ranking?.length >= 4 && (
+        {canManageTournament && stats?.ranking?.length >= 4 && (
           <button
             type="button"
             onClick={handleCreateFinalRoundRobin}
@@ -1291,6 +1330,11 @@ export default function TorneoDetalle() {
                     })
                   : "";
 
+                // ¿Es un partido de final?
+                const isFinalMatch =
+                  match.type === "final" ||
+                  match.stage === "round_robin_final";
+
                 const renderTeam = (team, isWinner, alignRight = false) => (
                   <div
                     style={{
@@ -1299,21 +1343,40 @@ export default function TorneoDetalle() {
                       textAlign: alignRight ? "right" : "left",
                     }}
                   >
-                    {(team || []).map((playerId) => (
-                      <p
-                        key={playerId}
-                        style={{
-                          margin: 0,
-                          fontSize: "0.76rem",
-                          color: isWinner ? "var(--fg)" : "var(--muted)",
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          whiteSpace: "nowrap",
-                        }}
-                      >
-                        {getPlayerName(playerId)}
-                      </p>
-                    ))}
+                    {(team || []).map((playerId) => {
+                      const isCurrentUser = userId && playerId === userId;
+
+                      // Color por defecto (como antes)
+                      let color = isWinner ? "var(--fg)" : "var(--muted)";
+
+                      // Si es el usuario actual, aplicamos los colores especiales
+                      if (isCurrentUser) {
+                        if (s1 !== s2) {
+                          // Partido con ganador
+                          color = isWinner ? "#22c55e" : "#ef4444"; // verde si ganó, rojo si perdió
+                        } else {
+                          // Empate (por si algún día hay)
+                          color = "var(--accent)";
+                        }
+                      }
+
+                      return (
+                        <p
+                          key={playerId}
+                          style={{
+                            margin: 0,
+                            fontSize: "0.76rem",
+                            color,
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                            fontWeight: isCurrentUser ? 600 : 400,
+                          }}
+                        >
+                          {getPlayerName(playerId)}
+                        </p>
+                      );
+                    })}
                   </div>
                 );
 
@@ -1322,9 +1385,16 @@ export default function TorneoDetalle() {
                     key={match.id || idx}
                     style={{
                       borderRadius: "0.9rem",
-                      border: "1px solid var(--border)",
-                      padding: "0.5rem 0.55rem",
-                      background: "var(--bg)",
+                      border: isFinalMatch
+                        ? "1px solid rgba(250,204,21,0.7)" // doradito
+                        : "1px solid var(--border)",
+                      padding: "0.55rem 0.6rem",
+                      background: isFinalMatch
+                        ? "var(--bg-elevated)"
+                        : "var(--bg)",
+                      boxShadow: isFinalMatch
+                        ? "0 0 0 1px rgba(250,204,21,0.18)"
+                        : "none",
                     }}
                   >
                     <div
@@ -1333,24 +1403,52 @@ export default function TorneoDetalle() {
                         justifyContent: "space-between",
                         alignItems: "center",
                         marginBottom: "0.35rem",
+                        gap: "0.4rem",
                       }}
                     >
                       <span
                         style={{
                           fontSize: "0.75rem",
                           color: "var(--muted)",
+                          fontWeight: isFinalMatch ? 600 : 400,
                         }}
                       >
-                        Partido #{idx + 1}
+                        {isFinalMatch
+                          ? "Partido de Final"
+                          : `Partido #${idx + 1}`}
                       </span>
-                      <span
+
+                      <div
                         style={{
-                          fontSize: "0.72rem",
-                          color: "var(--muted)",
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "0.4rem",
                         }}
                       >
-                        {date}
-                      </span>
+                        {isFinalMatch && (
+                          <span
+                            style={{
+                              fontSize: "0.65rem",
+                              textTransform: "uppercase",
+                              padding: "0.15rem 0.45rem",
+                              borderRadius: "999px",
+                              background: "rgba(250,204,21,0.12)",
+                              color: "#facc15",
+                              fontWeight: 600,
+                            }}
+                          >
+                            Final
+                          </span>
+                        )}
+                        <span
+                          style={{
+                            fontSize: "0.72rem",
+                            color: "var(--muted)",
+                          }}
+                        >
+                          {date}
+                        </span>
+                      </div>
                     </div>
 
                     <div

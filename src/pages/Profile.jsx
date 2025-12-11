@@ -542,6 +542,7 @@ export default function Profile() {
   const handleLogout = async () => {
     try {
       await logout();
+       localStorage.removeItem("padel-remembered-credentials");
     } catch (err) {
       console.error("Error al cerrar sesión:", err);
     }
@@ -1495,7 +1496,7 @@ export default function Profile() {
         <MiniStatCard label="Derrotas" value={stats.losses} />
         <MiniStatCard label="Winrate" value={stats.winRate} suffix="%" />
         <MiniStatCard
-          label="Torneos jugados"
+          label="Torneos"
           value={stats.tournamentsPlayed}
         />
         <MiniStatCard

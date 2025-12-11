@@ -193,6 +193,8 @@ export default function Home() {
   // NUEVO: animaciones
   const [plBarValue, setPlBarValue] = useState(0);
   const [animateTop3, setAnimateTop3] = useState(false);
+  const [rankingLoading, setRankingLoading] = useState(false);
+
 
   // --------------------------
   // Cargar datos de usuario
@@ -216,13 +218,25 @@ export default function Home() {
       });
 
       const statsData = data.stats || {};
-      setStats({
-        totalMatches: statsData.totalMatches || 0,
-        totalWins: statsData.wins || 0,
-        winRate: statsData.winRate || 0,
-        tournamentsPlayed: statsData.tournamentsPlayed || 0,
-      });
 
+      // Valores base de partidos y victorias
+      const baseTotalMatches =
+        typeof statsData.totalMatches === "number"
+          ? statsData.totalMatches
+          : Array.isArray(statsData.recentMatches)
+          ? statsData.recentMatches.length
+          : Array.isArray(data.recentMatches)
+          ? data.recentMatches.length
+          : 0;
+
+      const baseWins =
+        typeof statsData.wins === "number"
+          ? statsData.wins
+          : typeof data.wins === "number"
+          ? data.wins
+          : 0;
+
+      // Recent matches (para stats y para lista de actividad)
       const recent =
         Array.isArray(statsData.recentMatches) && statsData.recentMatches.length
           ? statsData.recentMatches
@@ -230,9 +244,44 @@ export default function Home() {
           ? data.recentMatches
           : [];
 
+      // Torneos jugados: si no viene guardado, lo calculamos por torneos distintos
+      let tournamentsPlayed =
+        typeof statsData.tournamentsPlayed === "number"
+          ? statsData.tournamentsPlayed
+          : typeof data.tournamentsPlayed === "number"
+          ? data.tournamentsPlayed
+          : 0;
+
+      if ((!tournamentsPlayed || tournamentsPlayed === 0) && recent.length > 0) {
+        const distinct = new Set(
+          recent
+            .map(
+              (m) =>
+                m.tournamentId ||
+                m.tournament ||
+                m.tournamentName ||
+                m.torneoId
+            )
+            .filter(Boolean)
+        );
+        tournamentsPlayed = distinct.size;
+      }
+
       const sortedRecent = Array.isArray(recent)
-        ? [...recent].sort((a, b) => getMatchDateMillis(b) - getMatchDateMillis(a))
+        ? [...recent].sort(
+            (a, b) => getMatchDateMillis(b) - getMatchDateMillis(a)
+          )
         : [];
+
+      setStats({
+        totalMatches: baseTotalMatches,
+        totalWins: baseWins,
+        winRate:
+          baseTotalMatches > 0
+            ? Math.round((baseWins / baseTotalMatches) * 100)
+            : 0,
+        tournamentsPlayed,
+      });
 
       setUserRecentMatches(sortedRecent);
       setLoading(false);
@@ -295,6 +344,7 @@ export default function Home() {
       setClubMembers([]);
       setSelectedMember(null);
       setMemberDetail(null);
+      setRankingLoading(false);
       return;
     }
 
@@ -307,8 +357,11 @@ export default function Home() {
         setClubMembers([]);
         setSelectedMember(null);
         setMemberDetail(null);
+        setRankingLoading(false);
         return;
       }
+
+      setRankingLoading(true);
 
       const membersList = clubData.members;
       const membersData = [];
@@ -338,7 +391,7 @@ export default function Home() {
         });
       }
 
-      // 👉 Ordenar primero por rango (RANK_ORDER) y luego por PL
+      // Ordenar por rango y PL
       membersData.sort((a, b) => {
         const ra = getRankOrder(a.rankLabel);
         const rb = getRankOrder(b.rankLabel);
@@ -352,6 +405,8 @@ export default function Home() {
         const stillExists = membersData.find((m) => m.id === prev.id);
         return stillExists || membersData[0] || null;
       });
+
+      setRankingLoading(false);
     });
 
     return () => unsubClub();
@@ -381,6 +436,7 @@ export default function Home() {
 
         const rankInfo = getRankInfoFromData(data.rank, lp);
 
+        // -------- partidos recientes (para lista) --------
         const recent =
           Array.isArray(statsData.recentMatches) && statsData.recentMatches.length
             ? statsData.recentMatches
@@ -394,6 +450,38 @@ export default function Home() {
             )
           : [];
 
+        // -------- stats numéricas (para el resumen) --------
+        const totalMatches =
+          typeof statsData.totalMatches === "number"
+            ? statsData.totalMatches
+            : Array.isArray(statsData.recentMatches)
+            ? statsData.recentMatches.length
+            : Array.isArray(data.recentMatches)
+            ? data.recentMatches.length
+            : 0;
+
+        const wins =
+          typeof statsData.wins === "number"
+            ? statsData.wins
+            : typeof data.wins === "number"
+            ? data.wins
+            : 0;
+
+        const losses =
+          typeof statsData.losses === "number"
+            ? statsData.losses
+            : Math.max(totalMatches - wins, 0);
+
+        const tournamentsPlayed =
+          typeof statsData.tournamentsPlayed === "number"
+            ? statsData.tournamentsPlayed
+            : typeof data.tournamentsPlayed === "number"
+            ? data.tournamentsPlayed
+            : 0;
+
+        const winRate =
+          totalMatches > 0 ? Math.round((wins / totalMatches) * 100) : 0;
+
         setMemberDetail({
           id: snap.id,
           name: data.displayName || data.name || data.email || "Jugador",
@@ -404,11 +492,11 @@ export default function Home() {
           rankImage: rankInfo.image,
           leaguePoints: lp,
           stats: {
-            totalMatches: statsData.totalMatches || 0,
-            wins: statsData.wins || 0,
-            losses: statsData.losses || 0,
-            tournamentsPlayed: statsData.tournamentsPlayed || 0,
-            winRate: statsData.winRate || 0,
+            totalMatches,
+            wins,
+            losses,
+            tournamentsPlayed,
+            winRate,
           },
           recentMatches: sortedRecent,
         });
@@ -479,6 +567,15 @@ export default function Home() {
     return () => clearTimeout(timeout);
   }, [top3Members]);
 
+
+    // Abrir modal de detalle de un jugador del ranking
+  const handleOpenMemberDetail = (member) => {
+    if (!member) return;
+    setSelectedMember(member);
+    setShowMemberDetailModal(true);
+  };
+
+
   // --------------------------
   // Render
   // --------------------------
@@ -496,16 +593,171 @@ export default function Home() {
     );
   }
 
+  // 🔹 NUEVO: Skeletons mientras carga
   if (loading) {
     return (
       <div
         style={{
-          padding: "1.2rem 0.5rem 5.5rem",
+          padding: "0.6rem 0.5rem 5.5rem",
           maxWidth: 480,
           margin: "0 auto",
         }}
       >
-        <p style={{ color: "var(--muted)" }}>Cargando tu panel...</p>
+        {/* Skeleton header */}
+        <section style={{ marginBottom: "0.8rem" }}>
+          <div
+            style={{
+              borderRadius: "1rem",
+              border: "1px solid var(--border)",
+              padding: "0.75rem 0.8rem",
+              background: "var(--bg-elevated)",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                gap: "0.75rem",
+              }}
+            >
+              <div style={{ flex: 1 }}>
+                <div
+                  style={{
+                    width: "60%",
+                    height: 10,
+                    borderRadius: 999,
+                    background: "var(--bg)",
+                    marginBottom: 6,
+                  }}
+                />
+                <div
+                  style={{
+                    width: "80%",
+                    height: 14,
+                    borderRadius: 999,
+                    background: "var(--bg)",
+                    marginBottom: 8,
+                  }}
+                />
+                <div
+                  style={{
+                    width: "70%",
+                    height: 10,
+                    borderRadius: 999,
+                    background: "var(--bg)",
+                  }}
+                />
+              </div>
+              <div
+                style={{
+                  width: 52,
+                  height: 52,
+                  borderRadius: "999px",
+                  background: "var(--bg)",
+                  border: "1px solid var(--border)",
+                  flexShrink: 0,
+                }}
+              />
+            </div>
+
+            <div
+              style={{
+                marginTop: "0.8rem",
+                display: "flex",
+                alignItems: "center",
+                gap: "0.6rem",
+              }}
+            >
+              <div
+                style={{
+                  width: 65,
+                  height: 65,
+                  borderRadius: 16,
+                  background: "var(--bg)",
+                }}
+              />
+              <div style={{ flex: 1 }}>
+                <div
+                  style={{
+                    width: "40%",
+                    height: 10,
+                    borderRadius: 999,
+                    background: "var(--bg)",
+                    marginBottom: 6,
+                  }}
+                />
+                <div
+                  style={{
+                    width: "65%",
+                    height: 12,
+                    borderRadius: 999,
+                    background: "var(--bg)",
+                    marginBottom: 8,
+                  }}
+                />
+                <div
+                  style={{
+                    width: "100%",
+                    height: 7,
+                    borderRadius: 999,
+                    background: "var(--bg)",
+                  }}
+                />
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* Skeleton Mis estadísticas */}
+        <section>
+          <div
+            style={{
+              width: "40%",
+              height: 12,
+              borderRadius: 999,
+              background: "var(--bg-elevated)",
+              marginBottom: "0.6rem",
+            }}
+          />
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+              gap: "0.6rem",
+            }}
+          >
+            {Array.from({ length: 4 }).map((_, idx) => (
+              <div
+                key={idx}
+                style={{
+                  borderRadius: "0.9rem",
+                  border: "1px solid var(--border)",
+                  padding: "0.55rem 0.6rem",
+                  background: "var(--bg-elevated)",
+                }}
+              >
+                <div
+                  style={{
+                    width: "60%",
+                    height: 10,
+                    borderRadius: 999,
+                    background: "var(--bg)",
+                    marginBottom: 8,
+                  }}
+                />
+                <div
+                  style={{
+                    width: "40%",
+                    height: 14,
+                    borderRadius: 999,
+                    background: "var(--bg)",
+                  }}
+                />
+              </div>
+            ))}
+          </div>
+        </section>
       </div>
     );
   }
@@ -716,10 +968,7 @@ export default function Home() {
           >
             <StatCard label="Partidos jugados" value={stats.totalMatches} />
             <StatCard label="Victorias" value={stats.totalWins} />
-            <StatCard
-              label="Winrate"
-              value={`${computedWinRate}%`}
-            />
+            <StatCard label="Winrate" value={`${computedWinRate}%`} />
             <StatCard
               label="Torneos jugados"
               value={stats.tournamentsPlayed || completedTournaments.length}
@@ -765,144 +1014,195 @@ export default function Home() {
             style={{
               borderRadius: "1rem",
               border: "1px solid var(--border)",
-              padding: "0.7rem 0.8rem",
+              padding: "0.8rem 0.8rem",
               background: "var(--bg-elevated)",
             }}
           >
-            {top3Members.length === 0 ? (
-              <p
-                style={{
-                  margin: 0,
-                  fontSize: "0.78rem",
-                  color: "var(--muted)",
-                }}
-              >
-                {userData?.activeClubId
-                  ? "Cuando haya jugadores con PL en tu club, aquí verás el top ranking."
-                  : "Cuando elijas un club activo y juegues partidos, aquí verás el top ranking."}
-              </p>
-            ) : (
-              <div
-                style={{
-                  display: "flex",
-                  gap: "0.6rem",
-                  alignItems: "flex-end",
-                  justifyContent: "space-between",
-                }}
-              >
-                {top3Members.map((m, index) => {
-                  const isFirst = index === 0;
-                  const isSecond = index === 1;
-                  const height = isFirst ? 75 : isSecond ? 75 : 75;
+          {rankingLoading ? (
+            // Skeletons mientras carga el ranking
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-around",
+                gap: "0.6rem",
+              }}
+            >
+              {Array.from({ length: 3 }).map((_, idx) => (
+                <div
+                  key={idx}
+                  style={{
+                    flex: 1,
+                    maxWidth: 120,
+                    borderRadius: "0.9rem",
+                    border: "1px solid var(--border)",
+                    padding: "0.6rem 0.5rem",
+                    background: "var(--bg-elevated)",
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    gap: "0.35rem",
+                  }}
+                >
+                  <div
+                    style={{
+                      width: 60,
+                      height: 60,
+                      borderRadius: "999px",
+                      background: "var(--bg)",
+                    }}
+                  />
+                  <div
+                    style={{
+                      width: "60%",
+                      height: 10,
+                      borderRadius: 999,
+                      background: "var(--bg)",
+                    }}
+                  />
+                  <div
+                    style={{
+                      width: "50%",
+                      height: 8,
+                      borderRadius: 999,
+                      background: "var(--bg)",
+                    }}
+                  />
+                </div>
+              ))}
+            </div>
+          ) : top3Members.length === 0 ? (
+            <p
+              style={{
+                margin: "0.3rem 0 0",
+                fontSize: "0.8rem",
+                color: "var(--muted)",
+              }}
+            >
+              Aún no hay ranking disponible. Juega torneos para generar el top.
+            </p>
+          ) : (
+            <div
+              style={{
+                display: "flex",
+                justifyContent:
+                  top3Members.length === 1 ? "center" : "space-between",
+                gap: "0.6rem",
+              }}
+            >
+              {top3Members.map((m, index) => {
+                const isCurrentUser = m.id === userData?.id;
+                const popScale = animateTop3 ? (index === 0 ? 1.05 : 1.0) : 1.0;
 
-                  return (
-                    <button
-                      key={m.id}
-                      type="button"
-                      onClick={() => {
-                        setSelectedMember(m);
-                        setShowMemberDetailModal(true);
-                      }}
+                return (
+                  <button
+                    key={m.id}
+                    type="button"
+                    onClick={() => handleOpenMemberDetail(m)}
+                    style={{
+                      flex: 1,
+                      maxWidth: 120,
+                      borderRadius: "0.9rem",
+                      border: isCurrentUser
+                        ? "2px solid var(--accent)"
+                        : "1px solid var(--border)",
+                      padding: "0.6rem 0.5rem",
+                      background: "var(--bg-elevated)",
+                      cursor: "pointer",
+                      display: "flex",
+                      flexDirection: "column",
+                      alignItems: "center",
+                      gap: "0.3rem",
+                      transform: `scale(${popScale})`,
+                      transition:
+                        "transform 220ms ease-out, box-shadow 220ms ease-out",
+                      boxShadow: animateTop3
+                        ? "0 14px 30px rgba(15,23,42,0.35)"
+                        : "none",
+                    }}
+                  >
+                    <span
                       style={{
-                        flex: 1,
-                        border: "none",
-                        background: "transparent",
-                        padding: 0,
-                        cursor: "pointer",
+                        fontSize: "0.7rem",
+                        color: "var(--muted)",
+                      }}
+                    >
+                      #{index + 1}
+                    </span>
+
+                    <div
+                      style={{
+                        width: 60,
+                        height: 60,
+                        borderRadius: "999px",
+                        overflow: "hidden",
+                        border: isCurrentUser
+                          ? "2px solid var(--accent)"
+                          : "1px solid transparent",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        background: m.profilePicture
+                          ? "var(--bg-elevated)"
+                          : "radial-gradient(circle at 30% 20%, #4084d6ff, #174ab8ff)",
+                      }}
+                    >
+                      {m.profilePicture ? (
+                        <img
+                          src={m.profilePicture}
+                          alt={m.name}
+                          style={{
+                            width: "100%",
+                            height: "100%",
+                            objectFit: "cover",
+                          }}
+                        />
+                      ) : (
+                        <span
+                          style={{
+                            fontSize: "1.4rem",
+                            fontWeight: 700,
+                            color: "#ffffff",
+                          }}
+                        >
+                          {(m.name || "J")[0].toUpperCase()}
+                        </span>
+                      )}
+                    </div>
+
+                    <div
+                      style={{
                         display: "flex",
                         flexDirection: "column",
                         alignItems: "center",
-                        gap: "0.35rem",
-                        opacity: animateTop3 ? 1 : 0,
-                        transform: animateTop3
-                          ? "translateY(0) scale(1)"
-                          : "translateY(8px) scale(0.85)",
-                        transition:
-                          "opacity 0.4s ease-out, transform 0.4s ease-out",
-                        transitionDelay: animateTop3
-                          ? `${index * 80}ms`
-                          : "0ms",
+                        gap: "0.05rem",
                       }}
                     >
-                      <div
+                      <span
                         style={{
-                          fontSize: "0.7rem",
-                          color: "var(--muted)",
-                        }}
-                      >
-                        #{index + 1}
-                      </div>
-                      <div
-                        style={{
-                          width: height,
-                          height: height,
-                          borderRadius: "999px",
-                          overflow: "hidden",
-                          border: isFirst
-                            ? "2px solid var(--accent)"
-                            : "1px solid var(--border)",
-                          background: "var(--bg)",
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                        }}
-                      >
-                        {m.profilePicture ? (
-                          <img
-                            src={m.profilePicture}
-                            alt={m.name}
-                            style={{
-                              width: "100%",
-                              height: "100%",
-                              objectFit: "cover",
-                            }}
-                          />
-                        ) : (
-                          <span
-                            style={{
-                              fontSize: isFirst ? "1.4rem" : "1.1rem",
-                              fontWeight: 700,
-                            }}
-                          >
-                            {(m.name || "J")[0].toUpperCase()}
-                          </span>
-                        )}
-                      </div>
-                      <img
-                        src={m.rankImage}
-                        alt={m.rankLabel}
-                        style={{
-                          width: 50,
-                          height: 50,
-                          objectFit: "contain",
-                        }}
-                      />
-                      <div
-                        style={{
-                          fontSize: "0.78rem",
+                          fontSize: "0.8rem",
                           fontWeight: 600,
-                          maxWidth: "100%",
+                          maxWidth: 110,
                           overflow: "hidden",
                           textOverflow: "ellipsis",
                           whiteSpace: "nowrap",
-                          color: "var(--fg)",
                         }}
                       >
                         {m.name}
-                      </div>
-                      <div
+                      </span>
+                      <span
                         style={{
-                          fontSize: "0.75rem",
+                          fontSize: "0.72rem",
                           color: "var(--muted)",
                         }}
                       >
                         {m.rankLabel}
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-            )}
+                      </span>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
           </div>
         </section>
 
@@ -1191,7 +1491,6 @@ export default function Home() {
                       display: "flex",
                       alignItems: "center",
                       justifyContent: "center",
-                      flexShrink: 0,
                     }}
                   >
                     {m.profilePicture ? (
@@ -1221,9 +1520,10 @@ export default function Home() {
                       minWidth: 0,
                     }}
                   >
-                    <div
+                    <p
                       style={{
-                        fontSize: "0.85rem",
+                        margin: 0,
+                        fontSize: "0.8rem",
                         fontWeight: 600,
                         overflow: "hidden",
                         textOverflow: "ellipsis",
@@ -1231,23 +1531,16 @@ export default function Home() {
                       }}
                     >
                       {m.name}
-                    </div>
-                    <div
+                    </p>
+                    <p
                       style={{
+                        margin: 0,
                         fontSize: "0.75rem",
                         color: "var(--muted)",
                       }}
                     >
-                      {m.rankLabel}
-                    </div>
-                  </div>
-                  <div
-                    style={{
-                      fontSize: "0.8rem",
-                      fontWeight: 600,
-                    }}
-                  >
-                    {m.leaguePoints} PL
+                      {m.rankLabel} • {m.leaguePoints} PL
+                    </p>
                   </div>
                 </button>
               ))}
@@ -1256,18 +1549,18 @@ export default function Home() {
         </div>
       )}
 
-      {/* MODAL: DETALLE DEL JUGADOR */}
+      {/* MODAL: DETALLE DE JUGADOR DEL CLUB */}
       {showMemberDetailModal && selectedMember && (
         <div
           onClick={() => setShowMemberDetailModal(false)}
           style={{
             position: "fixed",
             inset: 0,
-            background: "rgba(0, 0, 0, 0.9)",
+            background: "rgba(0,0,0,0.9)",
             display: "flex",
             justifyContent: "center",
-            alignItems: "center",
-            zIndex: 1000,
+            alignItems: "flex-end",
+            zIndex: 999,
           }}
         >
           <div
@@ -1275,10 +1568,11 @@ export default function Home() {
             style={{
               width: "100%",
               maxWidth: 480,
-              maxHeight: "80vh",
+              maxHeight: "82vh",
               background: "var(--bg-body)",
-              borderRadius: "1rem",
+              borderRadius: "1.1rem 1.1rem 0 0",
               border: "1px solid var(--border)",
+              borderBottom: "none",
               padding: "0.8rem 0.9rem 0.9rem",
               display: "flex",
               flexDirection: "column",
@@ -1287,20 +1581,78 @@ export default function Home() {
           >
             <div
               style={{
+                width: 40,
+                height: 4,
+                borderRadius: 999,
+                background: "var(--border)",
+                alignSelf: "center",
+                marginBottom: "0.2rem",
+              }}
+            />
+            <div
+              style={{
                 display: "flex",
                 alignItems: "center",
                 gap: "0.6rem",
               }}
             >
-              <h3
+              <div
                 style={{
-                  margin: 0,
-                  fontSize: "0.95rem",
-                  flex: 1,
+                  width: 46,
+                  height: 46,
+                  borderRadius: "999px",
+                  border: "1px solid var(--border)",
+                  overflow: "hidden",
+                  background: "var(--bg)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
                 }}
               >
-                Detalle del jugador
-              </h3>
+                {selectedMember.profilePicture ? (
+                  <img
+                    src={selectedMember.profilePicture}
+                    alt={selectedMember.name}
+                    style={{
+                      width: "100%",
+                      height: "100%",
+                      objectFit: "cover",
+                    }}
+                  />
+                ) : (
+                  <span
+                    style={{
+                      fontSize: "1.3rem",
+                      fontWeight: 700,
+                    }}
+                  >
+                    {(selectedMember.name || "J")[0].toUpperCase()}
+                  </span>
+                )}
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <p
+                  style={{
+                    margin: 0,
+                    fontSize: "0.95rem",
+                    fontWeight: 600,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {selectedMember.name}
+                </p>
+                <p
+                  style={{
+                    margin: "0.1rem 0 0",
+                    fontSize: "0.78rem",
+                    color: "var(--muted)",
+                  }}
+                >
+                  {selectedMember.rankLabel} • {selectedMember.leaguePoints} PL
+                </p>
+              </div>
               <button
                 type="button"
                 onClick={() => setShowMemberDetailModal(false)}
@@ -1315,290 +1667,227 @@ export default function Home() {
               </button>
             </div>
 
-            {memberDetailLoading || !memberDetail ? (
-              <p
-                style={{
-                  margin: 0,
-                  fontSize: "0.85rem",
-                  color: "var(--muted)",
-                }}
-              >
-                Cargando información del jugador...
-              </p>
-            ) : (
-              <>
-                <div
+            {/* Stats del miembro */}
+            <div
+              style={{
+                borderRadius: "0.9rem",
+                border: "1px solid var(--border)",
+                padding: "0.6rem 0.7rem",
+                background: "var(--bg-elevated)",
+              }}
+            >
+              {memberDetailLoading || !memberDetail ? (
+                <p
                   style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "0.8rem",
+                    margin: 0,
+                    fontSize: "0.8rem",
+                    color: "var(--muted)",
                   }}
                 >
-                  <div
-                    style={{
-                      width: 120,
-                      height: 120,
-                      borderRadius: "999px",
-                      overflow: "hidden",
-                      border: "1px solid var(--border)",
-                      background: "var(--bg)",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      flexShrink: 0,
-                    }}
-                  >
-                    {memberDetail.profilePicture ? (
-                      <img
-                        src={memberDetail.profilePicture}
-                        alt={memberDetail.name}
-                        style={{
-                          width: "100%",
-                          height: "100%",
-                          objectFit: "cover",
-                        }}
-                      />
-                    ) : (
-                      <span
-                        style={{
-                          fontSize: "2rem",
-                          fontWeight: 700,
-                        }}
-                      >
-                        {(memberDetail.name || "J")[0].toUpperCase()}
-                      </span>
-                    )}
-                  </div>
-
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <p
-                      style={{
-                        margin: 0,
-                        fontSize: "0.8rem",
-                        color: "var(--muted)",
-                      }}
-                    >
-                      {memberDetail.email || "Jugador del club"}
-                    </p>
-                    <p
-                      style={{
-                        margin: "0.1rem 0 0.25rem",
-                        fontSize: "1rem",
-                        fontWeight: 600,
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                        color: "var(--fg)",
-                      }}
-                    >
-                      {memberDetail.name}
-                    </p>
-                    <p
-                      style={{
-                        margin: 0,
-                        fontSize: "0.85rem",
-                        color: "var(--muted)",
-                      }}
-                    >
-                      {memberDetail.rankLabel} • {memberDetail.leaguePoints} PL
-                    </p>
-                  </div>
-
-                  <img
-                    src={memberDetail.rankImage}
-                    alt={memberDetail.rankLabel}
-                    style={{
-                      width: 95,
-                      height: 95,
-                      objectFit: "contain",
-                    }}
-                  />
-                </div>
-
-                {memberDetail.stats && (
-                  <div
-                    style={{
-                      borderRadius: "0.9rem",
-                      border: "1px solid var(--border)",
-                      background: "var(--bg)",
-                      padding: "0.6rem 0.7rem",
-                      display: "grid",
-                      gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-                      gap: "0.4rem",
-                    }}
-                  >
-                    <MiniStat
-                      label="Partidos"
-                      value={memberDetail.stats.totalMatches}
-                    />
-                    <MiniStat
-                      label="Victorias"
-                      value={memberDetail.stats.wins}
-                    />
-                    <MiniStat
-                      label="Derrotas"
-                      value={memberDetail.stats.losses}
-                    />
-                    <MiniStat
-                      label="Torneos"
-                      value={memberDetail.stats.tournamentsPlayed}
-                    />
-                    <MiniStat
-                      label="Winrate"
-                      value={
-                        memberDetail.stats.winRate != null
-                          ? `${memberDetail.stats.winRate}%`
-                          : "-"
-                      }
-                    />
-                  </div>
-                )}
-
-                <div
-                  style={{
-                    marginTop: "0.45rem",
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: "0.3rem",
-                  }}
-                >
+                  Cargando estadísticas...
+                </p>
+              ) : (
+                <>
                   <p
                     style={{
-                      margin: 0,
+                      margin: "0 0 0.4rem",
                       fontSize: "0.85rem",
                       fontWeight: 600,
                     }}
                   >
-                    Últimos partidos
+                    Estadísticas del jugador
                   </p>
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+                      gap: "0.45rem",
+                      fontSize: "0.78rem",
+                    }}
+                  >
+                    <StatInline
+                      label="Partidos jugados"
+                      value={memberDetail.stats.totalMatches}
+                    />
+                    <StatInline
+                      label="Victorias"
+                      value={memberDetail.stats.wins}
+                    />
+                    <StatInline
+                      label="Derrotas"
+                      value={memberDetail.stats.losses}
+                    />
+                    <StatInline
+                      label="Winrate"
+                      value={`${memberDetail.stats.winRate || 0}%`}
+                    />
+                  </div>
+                </>
+              )}
+            </div>
 
-                  {memberDetail.recentMatches &&
-                  memberDetail.recentMatches.length > 0 ? (
-                    <div
-                      style={{
-                        display: "flex",
-                        flexDirection: "column",
-                        gap: "0.3rem",
-                        maxHeight: "26vh",
-                        overflowY: "auto",
-                      }}
-                    >
-                      {memberDetail.recentMatches.slice(0, 6).map((m, idx) => {
-                        const plDelta =
-                          typeof m.plDelta === "number" ? m.plDelta : null;
-                        const plText =
-                          plDelta != null
-                            ? `${plDelta > 0 ? "+" : ""}${plDelta} PL`
-                            : null;
-                        const dateStr =
-                          m.date && !Number.isNaN(Date.parse(m.date))
-                            ? new Date(m.date).toLocaleDateString("es-MX", {
-                                day: "2-digit",
-                                month: "short",
-                              })
-                            : null;
-                        const title =
-                          m.tournamentName ||
-                          m.tournament ||
-                          "Partido rankeado";
-                        const score =
-                          m.score ||
-                          (typeof m.scoreA === "number" &&
-                            typeof m.scoreB === "number" &&
-                            `${m.scoreA}-${m.scoreB}`) ||
-                          null;
+            {/* Partidos recientes del miembro */}
+            <div
+              style={{
+                borderRadius: "0.9rem",
+                border: "1px solid var(--border)",
+                padding: "0.6rem 0.7rem",
+                background: "var(--bg-elevated)",
+                flex: 1,
+                minHeight: 0,
+                display: "flex",
+                flexDirection: "column",
+                gap: "0.4rem",
+              }}
+            >
+              <p
+                style={{
+                  margin: 0,
+                  fontSize: "0.85rem",
+                  fontWeight: 600,
+                }}
+              >
+                Actividad reciente
+              </p>
 
-                        return (
-                          <div
-                            key={m.id || idx}
+              {memberDetailLoading || !memberDetail ? (
+                <p
+                  style={{
+                    margin: 0,
+                    fontSize: "0.8rem",
+                    color: "var(--muted)",
+                  }}
+                >
+                  Cargando actividad...
+                </p>
+              ) : memberDetail.recentMatches &&
+                memberDetail.recentMatches.length > 0 ? (
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "0.35rem",
+                    overflowY: "auto",
+                    paddingRight: "0.1rem",
+                  }}
+                >
+                  {memberDetail.recentMatches.slice(0, 8).map((m, idx) => {
+                    const plDelta =
+                      typeof m.plDelta === "number" ? m.plDelta : null;
+                    const plText =
+                      plDelta != null
+                        ? `${plDelta > 0 ? "+" : ""}${plDelta} PL`
+                        : null;
+
+                    const dateStr =
+                      m.date && !Number.isNaN(Date.parse(m.date))
+                        ? new Date(m.date).toLocaleDateString("es-MX", {
+                            day: "2-digit",
+                            month: "short",
+                          })
+                        : null;
+
+                    const title =
+                      m.tournamentName ||
+                      m.tournament ||
+                      "Partido rankeado";
+
+                    const score =
+                      m.score ||
+                      (typeof m.scoreA === "number" &&
+                        typeof m.scoreB === "number" &&
+                        `${m.scoreA}-${m.scoreB}`) ||
+                      null;
+
+                    return (
+                      <div
+                        key={m.id || idx}
+                        style={{
+                          borderRadius: "0.7rem",
+                          border: "1px solid var(--border)",
+                          background: "var(--bg)",
+                          padding: "0.4rem 0.55rem",
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "0.5rem",
+                        }}
+                      >
+                        <div
+                          style={{
+                            width: 6,
+                            alignSelf: "stretch",
+                            borderRadius: 999,
+                            background:
+                              plDelta != null && plDelta > 0
+                                ? "rgba(34,197,94,0.9)"
+                                : plDelta != null && plDelta < 0
+                                ? "rgba(239,68,68,0.9)"
+                                : "var(--border)",
+                          }}
+                        />
+                        <div
+                          style={{
+                            flex: 1,
+                            minWidth: 0,
+                          }}
+                        >
+                          <p
                             style={{
-                              borderRadius: "0.7rem",
-                              border: "1px solid var(--border)",
-                              background: "var(--bg)",
-                              padding: "0.4rem 0.55rem",
-                              display: "flex",
-                              alignItems: "center",
-                              gap: "0.5rem",
+                              margin: 0,
+                              fontSize: "0.8rem",
+                              fontWeight: 600,
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                              whiteSpace: "nowrap",
                             }}
                           >
-                            <div
-                              style={{
-                                width: 6,
-                                alignSelf: "stretch",
-                                borderRadius: 999,
-                                background:
-                                  plDelta != null && plDelta > 0
-                                    ? "rgba(34,197,94,0.9)"
-                                    : plDelta != null && plDelta < 0
-                                    ? "rgba(239,68,68,0.9)"
-                                    : "var(--border)",
-                              }}
-                            />
-                            <div
-                              style={{
-                                flex: 1,
-                                minWidth: 0,
-                              }}
-                            >
-                              <p
-                                style={{
-                                  margin: 0,
-                                  fontSize: "0.8rem",
-                                  fontWeight: 600,
-                                  overflow: "hidden",
-                                  textOverflow: "ellipsis",
-                                  whiteSpace: "nowrap",
-                                }}
-                              >
-                                {title}
-                              </p>
-                              <p
-                                style={{
-                                  margin: 0,
-                                  fontSize: "0.75rem",
-                                  color: "var(--muted)",
-                                }}
-                              >
-                                {score
-                                  ? `Marcador: ${score}`
-                                  : "Marcador no disponible"}
-                                {dateStr ? ` · ${dateStr}` : ""}
-                              </p>
-                            </div>
-                            {plText && (
-                              <span
-                                style={{
-                                  fontSize: "0.8rem",
-                                  fontWeight: 600,
-                                  color:
-                                    plDelta > 0
-                                      ? "rgba(34,197,94,0.95)"
-                                      : plDelta < 0
-                                      ? "rgba(239,68,68,0.95)"
-                                      : "var(--muted)",
-                                }}
-                              >
-                                {plText}
-                              </span>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <p
-                      style={{
-                        margin: 0,
-                        fontSize: "0.8rem",
-                        color: "var(--muted)",
-                      }}
-                    >
-                      Aún no hay partidos recientes para este jugador.
-                    </p>
-                  )}
+                            {title}
+                          </p>
+                          <p
+                            style={{
+                              margin: 0,
+                              fontSize: "0.75rem",
+                              color: "var(--muted)",
+                            }}
+                          >
+                            {score
+                              ? `Marcador: ${score}`
+                              : "Marcador no disponible"}
+                            {dateStr ? ` · ${dateStr}` : ""}
+                          </p>
+                        </div>
+                        {plText && (
+                          <span
+                            style={{
+                              fontSize: "0.8rem",
+                              fontWeight: 600,
+                              color:
+                                plDelta > 0
+                                  ? "rgba(34,197,94,0.95)"
+                                  : plDelta < 0
+                                  ? "rgba(239,68,68,0.95)"
+                                  : "var(--muted)",
+                            }}
+                          >
+                            {plText}
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
-              </>
-            )}
+              ) : (
+                <p
+                  style={{
+                    margin: 0,
+                    fontSize: "0.8rem",
+                    color: "var(--muted)",
+                  }}
+                >
+                  Aún no hay partidos recientes para este jugador.
+                </p>
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -1606,70 +1895,59 @@ export default function Home() {
   );
 }
 
-// --- Helper components ---
-
 function StatCard({ label, value }) {
   return (
     <div
       style={{
         borderRadius: "0.9rem",
         border: "1px solid var(--border)",
-        background: "var(--bg-elevated)",
         padding: "0.55rem 0.6rem",
-        display: "flex",
-        flexDirection: "column",
-        gap: "0.2rem",
+        background: "var(--bg-elevated)",
       }}
     >
-      <span
+      <p
         style={{
+          margin: 0,
           fontSize: "0.78rem",
           color: "var(--muted)",
         }}
       >
         {label}
-      </span>
-      <span
+      </p>
+      <p
         style={{
-          fontSize: "0.95rem",
+          margin: "0.2rem 0 0",
+          fontSize: "1rem",
           fontWeight: 600,
         }}
       >
         {value}
-      </span>
+      </p>
     </div>
   );
 }
 
-function MiniStat({ label, value }) {
+function StatInline({ label, value }) {
   return (
-    <div
-      style={{
-        borderRadius: "0.7rem",
-        border: "1px solid var(--border)",
-        background: "var(--bg-elevated)",
-        padding: "0.4rem 0.45rem",
-        display: "flex",
-        flexDirection: "column",
-        gap: "0.1rem",
-      }}
-    >
-      <span
+    <div>
+      <p
         style={{
-          fontSize: "0.7rem",
+          margin: 0,
+          fontSize: "0.75rem",
           color: "var(--muted)",
         }}
       >
         {label}
-      </span>
-      <span
+      </p>
+      <p
         style={{
-          fontSize: "0.9rem",
+          margin: "0.05rem 0 0",
+          fontSize: "0.85rem",
           fontWeight: 600,
         }}
       >
         {value}
-      </span>
+      </p>
     </div>
   );
 }

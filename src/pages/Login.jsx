@@ -6,10 +6,11 @@ import { auth, db } from "../firebase/firebase";
 import {
   createUserWithEmailAndPassword,
   updateProfile,
+  sendPasswordResetEmail,
 } from "firebase/auth";
 import { doc, setDoc } from "firebase/firestore";
 
-// Importamos el nuevo logo
+// Logo
 import AppIcon from "../assets/logo/AppIcon.png";
 
 export default function Login() {
@@ -33,8 +34,10 @@ export default function Login() {
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [resetMessage, setResetMessage] = useState("");
   const [formErrors, setFormErrors] = useState({});
   const [hasSavedCreds, setHasSavedCreds] = useState(false);
+  const [autoLoginTried, setAutoLoginTried] = useState(false);
 
   // Cargar credenciales guardadas
   useEffect(() => {
@@ -54,8 +57,37 @@ export default function Login() {
     }
   }, []);
 
+  // Auto-login cuando hay credenciales guardadas + recordar activado
+  useEffect(() => {
+    const shouldAutoLogin =
+      isLogin && rememberMe && hasSavedCreds && !autoLoginTried && email && password;
+
+    if (!shouldAutoLogin) return;
+
+    const doAutoLogin = async () => {
+      try {
+        setLoading(true);
+        setError("");
+        await login(email, password);
+        navigate("/");
+      } catch (err) {
+        console.error("Error en auto-login:", err);
+        const msg = mapAuthError(err.code, "Error al iniciar sesión.");
+        setError(msg);
+      } finally {
+        setLoading(false);
+        setAutoLoginTried(true);
+      }
+    };
+
+    doAutoLogin();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLogin, rememberMe, hasSavedCreds, autoLoginTried, email, password, login, navigate]);
+
+  // Limpiar errores al cambiar entre login / registro o modificar campos
   useEffect(() => {
     setError("");
+    setResetMessage("");
     setFormErrors({});
   }, [isLogin, email, password, registerData]);
 
@@ -82,6 +114,7 @@ export default function Login() {
     e.preventDefault();
     setLoading(true);
     setError("");
+    setResetMessage("");
 
     try {
       await login(email, password);
@@ -143,6 +176,7 @@ export default function Login() {
     e.preventDefault();
     setLoading(true);
     setError("");
+    setResetMessage("");
     setFormErrors({});
 
     const errors = validateRegisterForm();
@@ -163,7 +197,7 @@ export default function Login() {
       });
 
       const userData = {
-        name,
+        displayName: name,
         email,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
@@ -180,6 +214,7 @@ export default function Login() {
             remember: true,
           })
         );
+        setHasSavedCreds(true);
       }
 
       navigate("/");
@@ -198,10 +233,35 @@ export default function Login() {
     setEmail("");
     setPassword("");
     setRememberMe(false);
+    setAutoLoginTried(false);
   };
 
   const handleToggleMode = () => {
     setIsLogin((prev) => !prev);
+  };
+
+  const handleForgotPassword = async () => {
+    setError("");
+    setResetMessage("");
+
+    if (!email) {
+      setError("Ingresa tu email para recuperar tu contraseña.");
+      return;
+    }
+
+    try {
+      await sendPasswordResetEmail(auth, email);
+      setResetMessage(
+        "Te enviamos un correo para restablecer tu contraseña."
+      );
+    } catch (err) {
+      console.error("Error al enviar correo de recuperación:", err);
+      const msg = mapAuthError(
+        err.code,
+        "No se pudo enviar el correo de recuperación."
+      );
+      setError(msg);
+    }
   };
 
   // ===================================================================
@@ -213,84 +273,62 @@ export default function Login() {
       style={{
         minHeight: "100vh",
         display: "flex",
+        flexDirection: "column",
         alignItems: "center",
-        justifyContent: "center",
-        padding: "1.5rem",
+        justifyContent: "flex-start",
+        padding: "2.5rem 1.5rem 1.5rem",
         backgroundColor: "var(--bg)",
       }}
     >
+      {/* Marca */}
+      <div style={{ textAlign: "center", marginBottom: "1.7rem" }}>
+        <img
+          src={AppIcon}
+          alt="League of Padel"
+          style={{
+            width: "150px",
+            height: "150px",
+            borderRadius: "22px",
+            objectFit: "cover",
+            marginBottom: "1rem",
+          }}
+        />
+
+        <h1
+          style={{
+            fontSize: "1.8rem",
+            fontWeight: 700,
+            margin: 0,
+            marginBottom: "0.25rem",
+          }}
+        >
+          League of Padel
+        </h1>
+        <p
+          style={{
+            margin: 0,
+            fontSize: "0.9rem",
+            color: "var(--muted)",
+          }}
+        >
+          {isLogin
+            ? "Inicia sesión para continuar"
+            : "Crea tu cuenta para empezar"}
+        </p>
+      </div>
+
+      {/* Contenido principal (sin card, solo ancho limitado) */}
       <div
         style={{
           width: "100%",
           maxWidth: "440px",
-          borderRadius: "1.5rem",
-          border: "1px solid var(--border)",
-          backgroundColor: "var(--bg-elevated)",
-          boxShadow: "0 24px 60px rgba(0, 0, 0, 0.45)",
-          padding: "2rem",
-          position: "relative",
-          overflow: "hidden",
         }}
       >
-        {/* GLOSS ANIMATION */}
-        <div
-          style={{
-            position: "absolute",
-            top: "-120%",
-            left: "-120%",
-            width: "300%",
-            height: "300%",
-            background:
-              "linear-gradient(120deg, transparent 40%, rgba(255,255,255,0.25) 50%, transparent 60%)",
-            transform: "rotate(25deg)",
-            animation: "glossMove 5s infinite linear",
-            pointerEvents: "none",
-            opacity: 0.17,
-          }}
-        />
-
-        {/* Marca */}
-        <div style={{ textAlign: "center", marginBottom: "1.8rem" }}>
-          <img
-            src={AppIcon}
-            alt="League of Padel"
-            style={{
-              width: "150px",
-              height: "150px",
-              borderRadius: "22px",
-              objectFit: "cover",
-              marginBottom: "1rem",
-            }}
-          />
-
-          <h1
-            style={{
-              fontSize: "1.7rem",
-              fontWeight: 700,
-              margin: 0,
-              marginBottom: "0.25rem",
-            }}
-          >
-            League of Padel
-          </h1>
-          <p
-            style={{
-              margin: 0,
-              fontSize: "0.9rem",
-              color: "var(--muted)",
-            }}
-          >
-            {isLogin
-              ? "Inicia sesión para continuar"
-              : "Crea tu cuenta para empezar"}
-          </p>
-        </div>
-
         {/* Toggle Login / Registro */}
         <div
           style={{
             display: "flex",
-            marginBottom: "1.5rem",
+            marginBottom: "1.3rem",
             backgroundColor: "rgba(15, 23, 42, 0.17)",
             borderRadius: "999px",
             padding: "0.25rem",
@@ -345,24 +383,46 @@ export default function Login() {
           </button>
         </div>
 
-        {/* Errores */}
-        {error && (
-          <div
-            style={{
-              marginBottom: "1rem",
-              padding: "0.75rem 0.9rem",
-              borderRadius: "0.9rem",
-              border: "1px solid #f87171",
-              backgroundColor: "rgba(248,113,113,0.1)",
-              color: "#fecaca",
-              fontSize: "0.8rem",
-              display: "flex",
-              alignItems: "center",
-              gap: "0.4rem",
-            }}
-          >
-            <Icon name="close" size={16} color="#fecaca" />
-            <span>{error}</span>
+        {/* Errores / mensajes */}
+        {(error || resetMessage) && (
+          <div style={{ marginBottom: "1rem" }}>
+            {error && (
+              <div
+                style={{
+                  marginBottom: resetMessage ? "0.5rem" : 0,
+                  padding: "0.75rem 0.9rem",
+                  borderRadius: "0.9rem",
+                  border: "1px solid #f87171",
+                  backgroundColor: "rgba(248,113,113,0.1)",
+                  color: "#fecaca",
+                  fontSize: "0.8rem",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "0.4rem",
+                }}
+              >
+                <Icon name="close" size={16} color="#fecaca" />
+                <span>{error}</span>
+              </div>
+            )}
+            {resetMessage && (
+              <div
+                style={{
+                  padding: "0.75rem 0.9rem",
+                  borderRadius: "0.9rem",
+                  border: "1px solid rgba(34,197,94,0.6)",
+                  backgroundColor: "rgba(34,197,94,0.12)",
+                  color: "#bbf7d0",
+                  fontSize: "0.8rem",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "0.4rem",
+                }}
+              >
+                <Icon name="check" size={16} color="#bbf7d0" />
+                <span>{resetMessage}</span>
+              </div>
+            )}
           </div>
         )}
 
@@ -400,7 +460,7 @@ export default function Login() {
             </div>
 
             {/* password */}
-            <div style={{ marginBottom: "0.9rem" }}>
+            <div style={{ marginBottom: "0.4rem" }}>
               <label
                 style={{
                   display: "block",
@@ -429,23 +489,57 @@ export default function Login() {
               />
             </div>
 
-            {/* recordar */}
+            {/* recordar + olvidar */}
             <div
               style={{
-                marginBottom: "1.1rem",
+                marginBottom: "1rem",
                 display: "flex",
                 alignItems: "center",
-                gap: "0.5rem",
-                fontSize: "0.8rem",
+                justifyContent: "space-between",
+                gap: "0.75rem",
+                fontSize: "0.78rem",
                 color: "var(--muted)",
               }}
             >
-              <input
-                type="checkbox"
-                checked={rememberMe}
-                onChange={(e) => setRememberMe(e.target.checked)}
-              />
-              <span>Recordar mis credenciales</span>
+              <label
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "0.4rem",
+                  cursor: "pointer",
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={rememberMe}
+                  onChange={(e) => {
+                    setRememberMe(e.target.checked);
+                    if (!e.target.checked) {
+                      localStorage.removeItem("padel-remembered-credentials");
+                      setHasSavedCreds(false);
+                      setAutoLoginTried(false);
+                    }
+                  }}
+                />
+                <span>Recordar mis credenciales</span>
+              </label>
+
+              <button
+                type="button"
+                onClick={handleForgotPassword}
+                disabled={loading}
+                style={{
+                  border: "none",
+                  background: "none",
+                  color: "var(--accent)",
+                  fontSize: "0.78rem",
+                  fontWeight: 600,
+                  cursor: loading ? "default" : "pointer",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                ¿Olvidaste tu contraseña?
+              </button>
             </div>
 
             {/* submit */}
@@ -686,10 +780,10 @@ export default function Login() {
               )}
             </div>
 
-            {/* recordar */}
+            {/* recordar en registro */}
             <div
               style={{
-                marginBottom: "1.1rem",
+                marginBottom: "1rem",
                 display: "flex",
                 alignItems: "center",
                 gap: "0.5rem",
@@ -753,7 +847,7 @@ export default function Login() {
         {/* Cambiar modo */}
         <div
           style={{
-            marginTop: "1.5rem",
+            marginTop: "1.4rem",
             borderTop: "1px solid var(--border)",
             paddingTop: "0.9rem",
             textAlign: "center",
@@ -778,16 +872,11 @@ export default function Login() {
           </button>
         </div>
 
-        {/* Animaciones */}
+        {/* Animación loader */}
         <style>{`
           @keyframes spin {
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
-          }
-
-          @keyframes glossMove {
-            0% { transform: translateX(-50%) translateY(-50%) rotate(25deg); }
-            100% { transform: translateX(50%) translateY(50%) rotate(25deg); }
           }
         `}</style>
       </div>

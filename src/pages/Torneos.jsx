@@ -46,6 +46,9 @@ export default function Torneos() {
   const [errorMsg, setErrorMsg] = useState("");
   const [successMsg, setSuccessMsg] = useState("");
 
+  const [createStep, setCreateStep] = useState(1); // 1: nombre, 2: jugadores, 3: config
+  const [showInactivePlayers, setShowInactivePlayers] = useState(false);
+
   const [form, setForm] = useState({
     name: "",
     players: [],
@@ -58,6 +61,7 @@ export default function Torneos() {
   // Vista previa
   const [previewMatches, setPreviewMatches] = useState([]);
   const [showPreview, setShowPreview] = useState(false);
+  const [showPreviewMatches, setShowPreviewMatches] = useState(false);
 
   // Modal torneos completados
   const [showCompletedModal, setShowCompletedModal] = useState(false);
@@ -75,6 +79,7 @@ export default function Torneos() {
     if (["matchCount", "courts", "name"].includes(field)) {
       setPreviewMatches([]);
       setShowPreview(false);
+      setShowPreviewMatches(false);
     }
   };
 
@@ -128,33 +133,43 @@ export default function Torneos() {
           return;
         }
 
-        const clubData = { id: clubSnap.id, ...clubSnap.data() };
-        setActiveClub(clubData);
+const clubData = { id: clubSnap.id, ...clubSnap.data() };
+setActiveClub(clubData);
 
-        if (Array.isArray(clubData.members) && clubData.members.length > 0) {
-          const membersData = [];
-          for (const memberId of clubData.members) {
-            try {
-              const memberRef = doc(db, "users", memberId);
-              const memberSnap = await getDoc(memberRef);
-              if (memberSnap.exists()) {
-                const data = memberSnap.data();
-                membersData.push({
-                  id: memberId,
-                  name:
-                    data.name ||
-                    data.displayName ||
-                    (data.email ? data.email.split("@")[0] : "Jugador"),
-                  email: data.email || "",
-                  profilePicture: data.profilePicture || data.photoURL || "",
-                });
-              }
-            } catch (err) {
-              console.error("Error cargando miembro del club:", err);
-            }
-          }
-          setClubMembers(membersData);
-        }
+// nuevo: mapa de estatus del club
+const memberStatus = clubData.memberStatus || {};
+
+if (Array.isArray(clubData.members) && clubData.members.length > 0) {
+  const membersData = [];
+  for (const memberId of clubData.members) {
+    try {
+      const memberRef = doc(db, "users", memberId);
+      const memberSnap = await getDoc(memberRef);
+
+      if (memberSnap.exists()) {
+        const data = memberSnap.data();
+
+        const statusValue = memberStatus[memberId];
+        const isActive =
+          typeof statusValue === "boolean" ? statusValue : true;
+
+        membersData.push({
+          id: memberId,
+          name:
+            data.name ||
+            data.displayName ||
+            (data.email ? data.email.split("@")[0] : "Jugador"),
+          email: data.email || "",
+          profilePicture: data.profilePicture || data.photoURL || "",
+          isActive,
+        });
+      }
+    } catch (err) {
+      console.error("Error cargando miembro del club:", err);
+    }
+  }
+  setClubMembers(membersData);
+}
       } catch (err) {
         console.error("Error cargando club activo:", err);
       } finally {
@@ -488,7 +503,7 @@ const generateInitialMatches = (playerIds, desiredMatchCount) => {
       setErrorMsg("Se necesitan al menos 4 jugadores para generar el torneo.");
       setShowPreview(false);
       setPreviewMatches([]);
-      return;
+      return false;
     }
 
     const allPlayerIds = getAllPlayerIds();
@@ -503,11 +518,13 @@ const generateInitialMatches = (playerIds, desiredMatchCount) => {
       );
       setShowPreview(false);
       setPreviewMatches([]);
-      return;
+      return false;
     }
 
     setPreviewMatches(matches);
-    setShowPreview(true); // <- aquí se abre el modal
+    setShowPreview(true); // seguimos usando el modal actual como "Paso 4"
+    setShowPreviewMatches(false);
+    return true;
   };
 
   // -----------------------------
@@ -625,6 +642,46 @@ const generateInitialMatches = (playerIds, desiredMatchCount) => {
     totalPlayersForm > 0
       ? ((form.matchCount * 4) / totalPlayersForm).toFixed(1)
       : "0.0";
+
+    // Si hay menos de 8 jugadores, forzar una sola cancha
+  useEffect(() => {
+    if (totalPlayersForm < 8 && form.courts > 1) {
+      setForm((prev) => ({
+        ...prev,
+        courts: 1,
+      }));
+    }
+  }, [totalPlayersForm, form.courts]);
+
+
+  // Pequeña recomendación según jugadores
+  const matchesRecommendation = (() => {
+    if (totalPlayersForm === 0) return "";
+    if (totalPlayersForm <= 4) {
+      return "Con 4 jugadores suele funcionar bien entre 4 y 6 partidos.";
+    }
+    if (totalPlayersForm <= 6) {
+      return "Con 5-6 jugadores, 8-10 partidos dan 3-4 partidos por jugador.";
+    }
+    if (totalPlayersForm <= 8) {
+      return "Con 7-8 jugadores, 10-12 partidos suelen ser un buen equilibrio.";
+    }
+    return "Con muchos jugadores puedes subir el número de partidos para que todos jueguen algo parecido.";
+  })();
+
+  // Activos vs inactivos (configurados en la pantalla de Clubes)
+  const activeMembers = clubMembers.filter(
+    (m) => m.isActive !== false // si no viene nada, lo tomamos como activo
+  );
+
+  const inactiveMembers = clubMembers.filter(
+    (m) => m.isActive === false
+  );
+
+  const visibleMembers = showInactivePlayers
+    ? [...activeMembers, ...inactiveMembers]
+    : activeMembers;
+
 
     if (loading) {
       return (
@@ -896,9 +953,30 @@ const generateInitialMatches = (playerIds, desiredMatchCount) => {
     return `${baseName} (nombre automático)`;
   };
 
-  const allPreviewPlayers = getAllPlayerIds().map((id) =>
-    getPlayerDisplayName(id)
-  );
+  // Jugadores con más información para el resumen
+  const allPreviewPlayersDetailed = getAllPlayerIds().map((id) => {
+    if (id.startsWith("guest-")) {
+      const idx = parseInt(id.split("-")[1], 10);
+      const name = form.guests[idx] || "Invitado";
+      return {
+        id,
+        name,
+        profilePicture: null,
+        isGuest: true,
+      };
+    }
+
+    const member = clubMembers.find((m) => m.id === id);
+    return {
+      id,
+      name: member?.name || "Jugador",
+      profilePicture: member?.profilePicture || null,
+      isGuest: false,
+    };
+  });
+
+  // Sólo nombres (para el modal de vista previa existente)
+  const allPreviewPlayers = allPreviewPlayersDetailed.map((p) => p.name);
 
   return (
     <div
@@ -995,6 +1073,8 @@ const generateInitialMatches = (playerIds, desiredMatchCount) => {
             onClick={() => {
               resetMessages();
               if (!hasActiveClub) return;
+              setCreateStep(1);
+              setShowInactivePlayers(false);
               setShowCreate(true);
             }}
             disabled={!hasActiveClub}
@@ -1056,480 +1136,1223 @@ const generateInitialMatches = (playerIds, desiredMatchCount) => {
         )}
       </section>
 
-      {/* FORM CREAR TORNEO */}
+      {/* WIZARD CREAR TORNEO (pantalla completa) */}
       {showCreate && hasActiveClub && (
-        <section className="card">
-          <h2
+        <div
+          style={{
+            position: "fixed",
+            top: "3.3rem", // deja libre la top bar
+            left: "50%",
+            transform: "translateX(-50%)",
+            bottom: "4.9rem", // deja libre la bottom nav
+            width: "100%",
+            maxWidth: 480,
+            background:
+              "linear-gradient(to bottom, rgba(15,23,42,0.95), rgba(15,23,42,0.98))",
+            display: "flex",
+            alignItems: "stretch",
+            justifyContent: "center",
+            zIndex: 45, // por debajo de la top bar (50)
+          }}
+        >
+          <div
             style={{
-              margin: 0,
-              marginBottom: "0.6rem",
-              fontSize: "0.95rem",
-            }}
-          >
-            Crear torneo
-          </h2>
-
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              handleGeneratePreview();
-            }}
-            style={{
+              width: "100%",
+              maxWidth: 520,
+              height: "100%",
+              borderRadius: 0,
+              border: "1px solid var(--border)",
+              background: "var(--bg-elevated)",
+              padding: "0.9rem 1rem",
+              boxShadow: "0 20px 60px rgba(15, 23, 42, 0)",
               display: "flex",
               flexDirection: "column",
-              gap: "0.6rem",
+              overflow: "hidden",
             }}
           >
-            {/* Nombre */}
-            <div>
-              <label
-                style={{
-                  fontSize: "0.75rem",
-                  fontWeight: 600,
-                  display: "block",
-                  marginBottom: "0.2rem",
-                }}
-              >
-                Nombre del torneo
-              </label>
-              <input
-                type="text"
-                value={form.name}
-                onChange={(e) => handleFormChange("name", e.target.value)}
-                placeholder="Ej. Torneo Nocturno"
-                style={{
-                  width: "100%",
-                  borderRadius: "0.8rem",
-                  border: "1px solid var(--border)",
-                  padding: "0.45rem 0.55rem",
-                  backgroundColor: "var(--bg)",
-                  color: "var(--fg)",
-                  fontSize: "0.85rem",
-                  outline: "none",
-                }}
-              />
-              <p
-                style={{
-                  margin: 0,
-                  marginTop: "0.2rem",
-                  fontSize: "0.7rem",
-                  color: "var(--muted)",
-                }}
-              >
-                Si lo dejas vacío, se generará un nombre automáticamente (único
-                por día y club).
-              </p>
-            </div>
-
-            {/* Slider partidos */}
-            <div>
-              <label
-                style={{
-                  fontSize: "0.75rem",
-                  fontWeight: 600,
-                  display: "block",
-                  marginBottom: "0.2rem",
-                }}
-              >
-                Número de partidos a crear
-              </label>
-
-              <input
-                type="range"
-                min={6}
-                max={18}
-                value={form.matchCount}
-                onChange={(e) =>
-                  handleFormChange("matchCount", Number(e.target.value) || 1)
-                }
-                style={{
-                  width: "100%",
-                  cursor: "pointer",
-                }}
-              />
-
-              <div
-                style={{
-                  marginTop: "0.2rem",
-                  display: "flex",
-                  justifyContent: "space-between",
-                  fontSize: "0.72rem",
-                  color: "var(--muted)",
-                }}
-              >
-                <span>{form.matchCount} partidos</span>
-                <span>
-                  Aprox. {approxMatchesPerPlayer} partidos por jugador
-                </span>
-              </div>
-            </div>
-
-            {/* Canchas */}
-            <div>
-              <label
-                style={{
-                  fontSize: "0.75rem",
-                  fontWeight: 600,
-                  display: "block",
-                  marginBottom: "0.2rem",
-                }}
-              >
-                Canchas simultáneas
-              </label>
-              <div
-                style={{
-                  display: "flex",
-                  gap: "0.4rem",
-                }}
-              >
-                {[1, 2].map((n) => {
-                  const active = form.courts === n;
-                  return (
-                    <button
-                      key={n}
-                      type="button"
-                      onClick={() => handleFormChange("courts", n)}
-                      style={{
-                        flex: 1,
-                        borderRadius: "999px",
-                        border: active
-                          ? "1px solid var(--accent)"
-                          : "1px solid var(--border)",
-                        padding: "0.4rem 0.5rem",
-                        background: active ? "var(--accent-soft)" : "var(--bg)",
-                        color: active ? "var(--accent)" : "var(--muted)",
-                        fontSize: "0.8rem",
-                        cursor: "pointer",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        gap: "0.3rem",
-                      }}
-                    >
-                      <Icon
-                        name="court"
-                        size={14}
-                        color={active ? "var(--accent)" : "var(--muted)"}
-                      />
-                      {n === 1 ? "1 cancha" : "2 canchas"}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Jugadores club */}
-            <div>
-              <label
-                style={{
-                  fontSize: "0.75rem",
-                  fontWeight: 600,
-                  display: "block",
-                  marginBottom: "0.2rem",
-                }}
-              >
-                Jugadores del club
-              </label>
-
-              {clubMembers.length === 0 ? (
-                <p
-                  style={{
-                    margin: 0,
-                    fontSize: "0.8rem",
-                    color: "var(--muted)",
-                  }}
-                >
-                  Tu club aún no tiene jugadores registrados.
-                </p>
-              ) : (
-                <div
-                  style={{
-                    display: "flex",
-                    flexWrap: "wrap",
-                    gap: "0.35rem",
-                  }}
-                >
-                  {clubMembers.map((m) => {
-                    const selected = form.players.includes(m.id);
-                    return (
-                      <button
-                        key={m.id}
-                        type="button"
-                        onClick={() => togglePlayer(m.id)}
-                        style={{
-                          borderRadius: "999px",
-                          border: selected
-                            ? "1px solid var(--accent)"
-                            : "1px solid var(--border)",
-                          padding: "0.3rem 0.55rem",
-                          background: selected
-                            ? "var(--accent-soft)"
-                            : "var(--bg)",
-                          color: selected ? "var(--accent)" : "var(--fg)",
-                          fontSize: "0.75rem",
-                          display: "flex",
-                          alignItems: "center",
-                          gap: "0.25rem",
-                          cursor: "pointer",
-                        }}
-                      >
-                        <div
-                          style={{
-                            width: 18,
-                            height: 18,
-                            borderRadius: "999px",
-                            overflow: "hidden",
-                            backgroundColor: "var(--bg-elevated)",
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            fontSize: "0.65rem",
-                            fontWeight: 600,
-                          }}
-                        >
-                          {m.profilePicture ? (
-                            <img
-                              src={m.profilePicture}
-                              alt={m.name}
-                              style={{
-                                width: "100%",
-                                height: "100%",
-                                objectFit: "cover",
-                              }}
-                            />
-                          ) : (
-                            (m.name || "J")[0].toUpperCase()
-                          )}
-                        </div>
-                        <span
-                          style={{
-                            maxWidth: 130,
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
-                            whiteSpace: "nowrap",
-                          }}
-                        >
-                          {m.name}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-
-              <p
-                style={{
-                  margin: 0,
-                  marginTop: "0.25rem",
-                  fontSize: "0.7rem",
-                  color: "var(--muted)",
-                }}
-              >
-                Jugadores seleccionados: {form.players.length}
-              </p>
-            </div>
-
-            {/* Invitados */}
-            <div>
-              <label
-                style={{
-                  fontSize: "0.75rem",
-                  fontWeight: 600,
-                  display: "block",
-                  marginBottom: "0.2rem",
-                }}
-              >
-                Invitados
-              </label>
-              <div
-                style={{
-                  display: "flex",
-                  gap: "0.4rem",
-                  marginBottom: "0.35rem",
-                }}
-              >
-                <input
-                  type="text"
-                  value={form.guestName}
-                  onChange={(e) =>
-                    handleFormChange("guestName", e.target.value)
-                  }
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      addGuest();
-                    }
-                  }}
-                  placeholder="Nombre del invitado"
-                  style={{
-                    flex: 1,
-                    borderRadius: "0.8rem",
-                    border: "1px solid var(--border)",
-                    padding: "0.45rem 0.55rem",
-                    backgroundColor: "var(--bg)",
-                    color: "var(--fg)",
-                    fontSize: "0.85rem",
-                    outline: "none",
-                  }}
-                />
-                <button
-                  type="button"
-                  onClick={addGuest}
-                  style={{
-                    borderRadius: "0.9rem",
-                    border: "none",
-                    padding: "0.45rem 0.7rem",
-                    background:
-                      "linear-gradient(135deg, var(--accent), rgba(59,130,246,0.9))",
-                    color: "#ffffff",
-                    fontSize: "0.8rem",
-                    fontWeight: 600,
-                    cursor: "pointer",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "0.25rem",
-                  }}
-                >
-                  <Icon name="add" size={14} color="#ffffff" />
-                  Agregar
-                </button>
-              </div>
-
-              {form.guests.length > 0 && (
-                <div
-                  style={{
-                    display: "flex",
-                    flexWrap: "wrap",
-                    gap: "0.35rem",
-                  }}
-                >
-                  {form.guests.map((g) => (
-                    <div
-                      key={g}
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: "0.25rem",
-                        borderRadius: "999px",
-                        border: "1px solid var(--border)",
-                        padding: "0.25rem 0.5rem",
-                        fontSize: "0.75rem",
-                        backgroundColor: "var(--bg-elevated)",
-                      }}
-                    >
-                      <span>{g}</span>
-                      <button
-                        type="button"
-                        onClick={() => removeGuest(g)}
-                        style={{
-                          border: "none",
-                          background: "transparent",
-                          color: "var(--muted)",
-                          cursor: "pointer",
-                          fontSize: "0.8rem",
-                        }}
-                      >
-                        ×
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              <p
-                style={{
-                  margin: 0,
-                  marginTop: "0.25rem",
-                  fontSize: "0.7rem",
-                  color: "var(--muted)",
-                }}
-              >
-                Invitados: {form.guests.length}
-              </p>
-            </div>
-
-            {/* Resumen rápido */}
-            <div
-              style={{
-                borderRadius: "0.8rem",
-                padding: "0.5rem 0.6rem",
-                backgroundColor: "var(--bg-elevated)",
-                border: "1px dashed var(--border)",
-                fontSize: "0.78rem",
-              }}
-            >
-              Total de jugadores:{" "}
-              <strong>
-                {totalPlayersForm >= 4
-                  ? totalPlayersForm
-                  : `${totalPlayersForm} (mínimo 4)`}
-              </strong>
-              <br />
-              Partidos a crear: <strong>{form.matchCount}</strong> • Aprox.{" "}
-              <strong>{approxMatchesPerPlayer}</strong> partidos por jugador.
-            </div>
-
-            {/* Botones finales */}
+            {/* Header modal */}
             <div
               style={{
                 display: "flex",
-                flexDirection: "column",
-                gap: "0.4rem",
-                marginTop: "0.3rem",
+                alignItems: "center",
+                gap: "0.6rem",
+                marginBottom: "0.7rem",
               }}
             >
+              <div
+                style={{
+                  width: 30,
+                  height: 30,
+                  borderRadius: "0.9rem",
+                  background:
+                    "linear-gradient(135deg, rgba(59,130,246,0.95), rgba(147,51,234,0.9))",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  flexShrink: 0,
+                }}
+              >
+                <Icon name="tournament" size={18} color="#ffffff" />
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <h2
+                  style={{
+                    margin: 0,
+                    fontSize: "0.98rem",
+                  }}
+                >
+                  Crear torneo
+                </h2>
+                <p
+                  style={{
+                    margin: 0,
+                    marginTop: "0.15rem",
+                    fontSize: "0.78rem",
+                    color: "var(--muted)",
+                  }}
+                >
+                  Paso {createStep} de 4
+                </p>
+              </div>
               <button
                 type="button"
-                onClick={handleGeneratePreview}
-                disabled={saving}
+                onClick={() => {
+                  setShowCreate(false);
+                  setCreateStep(1);
+                  setShowInactivePlayers(false);
+                  resetMessages();
+                }}
                 style={{
-                  width: "100%",
+                  border: "none",
+                  background: "transparent",
+                  color: "var(--muted)",
+                  cursor: "pointer",
+                  fontSize: "1.2rem",
+                }}
+              >
+                ×
+              </button>
+            </div>
+
+            {/* Barra de pasos */}
+            <div
+              style={{
+                display: "flex",
+                gap: "0.35rem",
+                marginBottom: "0.8rem",
+              }}
+            >
+              {[
+                { step: 1, label: "Nombre" },
+                { step: 2, label: "Jugadores" },
+                { step: 3, label: "Configuración" },
+                { step: 4, label: "Resumen" },
+              ].map(({ step, label }) => {
+                const active = createStep === step;
+                const completed = createStep > step;
+                const canClick = step < createStep;
+
+                const status = active
+                  ? "active"
+                  : completed
+                  ? "done"
+                  : "pending";
+
+                const bg =
+                  status === "active"
+                    ? "var(--accent-soft)"
+                    : status === "done"
+                    ? "rgba(34,197,94,0.16)" // verde suave
+                    : "var(--bg)";
+                const borderColor =
+                  status === "done"
+                    ? "#22c55e"
+                    : status === "active"
+                    ? "var(--accent)"
+                    : "var(--border)";
+                const textColor =
+                  status === "done"
+                    ? "#22c55e"
+                    : status === "active"
+                    ? "var(--accent)"
+                    : "var(--muted)";
+
+                return (
+                  <button
+                    key={step}
+                    type="button"
+                    onClick={() => {
+                      if (!canClick) return;
+                      resetMessages();
+                      setCreateStep(step);
+                    }}
+                    style={{
+                      flex: 1,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "0.25rem",
+                      padding: "0.3rem 0.4rem",
+                      borderRadius: "999px",
+                      border: `1px solid ${borderColor}`,
+                      background: bg,
+                      color: textColor,
+                      fontSize: "0.7rem",
+                      cursor: canClick ? "pointer" : "default",
+                    }}
+                  >
+                    <div
+                      style={{
+                        width: 20,
+                        height: 20,
+                        borderRadius: "999px",
+                        border:
+                          status === "done"
+                            ? "none"
+                            : "1px solid currentColor",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        fontSize: "0.7rem",
+                        fontWeight: 600,
+                        flexShrink: 0,
+                        background:
+                          status === "done"
+                            ? "#22c55e"
+                            : status === "active"
+                            ? "var(--bg-elevated)"
+                            : "transparent",
+                        color: status === "done" ? "#ffffff" : "inherit",
+                      }}
+                    >
+                      {completed ? (
+                        <Icon name="check" size={11} color="currentColor" />
+                      ) : (
+                        step
+                      )}
+                    </div>
+                    <span
+                      style={{
+                        flex: 1,
+                        textAlign: "left",
+                        whiteSpace: "nowrap",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                      }}
+                    >
+                      {label}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Contenido scrollable del wizard (pasos 1-4) */}
+            <div
+              style={{
+                flex: 1,
+                overflowY: "auto",
+                paddingRight: "0.2rem",
+                display: "flex",
+                flexDirection: "column",
+                gap: "0.7rem",
+              }}
+            >
+              {/* STEP 1: Nombre */}
+              {createStep === 1 && (
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "0.6rem",
+                  }}
+                >
+                  <div>
+                    <label
+                      style={{
+                        fontSize: "0.75rem",
+                        fontWeight: 600,
+                        display: "block",
+                        marginBottom: "0.2rem",
+                      }}
+                    >
+                      Nombre del torneo
+                    </label>
+                    <input
+                      type="text"
+                      value={form.name}
+                      onChange={(e) =>
+                        handleFormChange("name", e.target.value)
+                      }
+                      placeholder="Ej. Torneo Nocturno"
+                      style={{
+                        width: "100%",
+                        borderRadius: "0.8rem",
+                        border: "1px solid var(--border)",
+                        padding: "0.45rem 0.55rem",
+                        backgroundColor: "var(--bg)",
+                        color: "var(--fg)",
+                        fontSize: "0.85rem",
+                        outline: "none",
+                      }}
+                    />
+                    <p
+                      style={{
+                        margin: 0,
+                        marginTop: "0.2rem",
+                        fontSize: "0.7rem",
+                        color: "var(--muted)",
+                      }}
+                    >
+                      Si lo dejas vacío, se generará un nombre automático,
+                      único por día y club.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* STEP 2: Jugadores */}
+              {createStep === 2 && (
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "0.7rem",
+                  }}
+                >
+                  {/* resumen contador */}
+                  <div
+                    style={{
+                      borderRadius: "0.8rem",
+                      padding: "0.45rem 0.55rem",
+                      border: "1px dashed var(--border)",
+                      background: "var(--bg)",
+                      fontSize: "0.75rem",
+                    }}
+                  >
+                    Total seleccionados (club + invitados):{" "}
+                    <strong>
+                      {totalPlayersForm >= 4
+                        ? totalPlayersForm
+                        : `${totalPlayersForm} (mínimo 4)`}
+                    </strong>
+                  </div>
+
+                  {/* Jugadores del club */}
+                  <div>
+                    <label
+                      style={{
+                        fontSize: "0.75rem",
+                        fontWeight: 600,
+                        display: "block",
+                        marginBottom: "0.2rem",
+                      }}
+                    >
+                      Jugadores del club
+                    </label>
+
+                    {clubMembers.length === 0 ? (
+                      <p
+                        style={{
+                          margin: 0,
+                          fontSize: "0.8rem",
+                          color: "var(--muted)",
+                        }}
+                      >
+                        Tu club aún no tiene jugadores registrados.
+                      </p>
+                    ) : (
+                      <>
+                        <p
+                          style={{
+                            margin: 0,
+                            marginBottom: "0.25rem",
+                            fontSize: "0.7rem",
+                            color: "var(--muted)",
+                          }}
+                        >
+                          Se muestran primero jugadores activos en el último
+                          mes.
+                        </p>
+
+                        {inactiveMembers.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setShowInactivePlayers((prev) => !prev)
+                            }
+                            style={{
+                              borderRadius: "999px",
+                              border: "1px solid var(--border)",
+                              padding: "0.25rem 0.6rem",
+                              background: "var(--bg-elevated)",
+                              color: "var(--fg)",
+                              fontSize: "0.72rem",
+                              cursor: "pointer",
+                              marginBottom: "0.4rem",
+                            }}
+                          >
+                            {showInactivePlayers
+                              ? "Ocultar jugadores con poca actividad"
+                              : `Mostrar más jugadores (${inactiveMembers.length})`}
+                          </button>
+                        )}
+
+                        <div
+                          style={{
+                            display: "flex",
+                            flexWrap: "wrap",
+                            gap: "0.45rem",
+                          }}
+                        >
+                          {visibleMembers.map((m) => {
+                            const selected = form.players.includes(m.id);
+                            return (
+                              <button
+                                key={m.id}
+                                type="button"
+                                onClick={() => togglePlayer(m.id)}
+                                style={{
+                                  flex: "1 1 calc(50% - 0.3rem)",
+                                  minWidth: 0,
+                                  borderRadius: "0.9rem",
+                                  border: selected
+                                    ? "1px solid var(--accent)"
+                                    : "1px solid var(--border)",
+                                  padding: "0.45rem 0.55rem",
+                                  background: selected
+                                    ? "var(--accent-soft)"
+                                    : "var(--bg-elevated)",
+                                  color: selected
+                                    ? "var(--accent)"
+                                    : "var(--fg)",
+                                  fontSize: "0.78rem",
+                                  display: "flex",
+                                  alignItems: "center",
+                                  gap: "0.4rem",
+                                  cursor: "pointer",
+                                }}
+                              >
+                                <div
+                                  style={{
+                                    width: 30,
+                                    height: 30,
+                                    borderRadius: "999px",
+                                    overflow: "hidden",
+                                    backgroundColor: "var(--bg)",
+                                    display: "flex",
+                                    alignItems: "center",
+                                    justifyContent: "center",
+                                    fontSize: "0.8rem",
+                                    fontWeight: 600,
+                                    flexShrink: 0,
+                                  }}
+                                >
+                                  {m.profilePicture ? (
+                                    <img
+                                      src={m.profilePicture}
+                                      alt={m.name}
+                                      style={{
+                                        width: "100%",
+                                        height: "100%",
+                                        objectFit: "cover",
+                                      }}
+                                    />
+                                  ) : (
+                                    (m.name || "J")[0].toUpperCase()
+                                  )}
+                                </div>
+                                <span
+                                  style={{
+                                    flex: 1,
+                                    minWidth: 0,
+                                    overflow: "hidden",
+                                    textOverflow: "ellipsis",
+                                    whiteSpace: "nowrap",
+                                    textAlign: "left",
+                                  }}
+                                >
+                                  {m.name}
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </>
+                    )}
+
+                    <p
+                      style={{
+                        margin: 0,
+                        marginTop: "0.25rem",
+                        fontSize: "0.7rem",
+                        color: "var(--muted)",
+                      }}
+                    >
+                      Jugadores seleccionados del club: {form.players.length}
+                    </p>
+                  </div>
+
+                  {/* Invitados */}
+                  <div>
+                    <label
+                      style={{
+                        fontSize: "0.75rem",
+                        fontWeight: 600,
+                        display: "block",
+                        marginBottom: "0.2rem",
+                      }}
+                    >
+                      Invitados
+                    </label>
+                    <div
+                      style={{
+                        display: "flex",
+                        gap: "0.4rem",
+                        marginBottom: "0.35rem",
+                      }}
+                    >
+                      <input
+                        type="text"
+                        value={form.guestName}
+                        onChange={(e) =>
+                          handleFormChange("guestName", e.target.value)
+                        }
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            addGuest();
+                          }
+                        }}
+                        placeholder="Nombre del invitado"
+                        style={{
+                          flex: 1,
+                          borderRadius: "0.8rem",
+                          border: "1px solid var(--border)",
+                          padding: "0.45rem 0.55rem",
+                          backgroundColor: "var(--bg)",
+                          color: "var(--fg)",
+                          fontSize: "0.85rem",
+                          outline: "none",
+                        }}
+                      />
+                      <button
+                        type="button"
+                        onClick={addGuest}
+                        style={{
+                          borderRadius: "0.9rem",
+                          border: "none",
+                          padding: "0.45rem 0.7rem",
+                          background:
+                            "linear-gradient(135deg, var(--accent), rgba(59,130,246,0.9))",
+                          color: "#ffffff",
+                          fontSize: "0.8rem",
+                          fontWeight: 600,
+                          cursor: "pointer",
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "0.25rem",
+                        }}
+                      >
+                        <Icon name="add" size={14} color="#ffffff" />
+                        Agregar
+                      </button>
+                    </div>
+
+                    {form.guests.length > 0 && (
+                      <div
+                        style={{
+                          display: "flex",
+                          flexWrap: "wrap",
+                          gap: "0.35rem",
+                        }}
+                      >
+                        {form.guests.map((g) => (
+                          <div
+                            key={g}
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: "0.25rem",
+                              borderRadius: "999px",
+                              border: "1px solid var(--border)",
+                              padding: "0.25rem 0.5rem",
+                              fontSize: "0.75rem",
+                              backgroundColor: "var(--bg-elevated)",
+                            }}
+                          >
+                            <span>{g}</span>
+                            <button
+                              type="button"
+                              onClick={() => removeGuest(g)}
+                              style={{
+                                border: "none",
+                                background: "transparent",
+                                color: "var(--muted)",
+                                cursor: "pointer",
+                                fontSize: "0.8rem",
+                              }}
+                            >
+                              ×
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    <p
+                      style={{
+                        margin: 0,
+                        marginTop: "0.25rem",
+                        fontSize: "0.7rem",
+                        color: "var(--muted)",
+                      }}
+                    >
+                      Invitados: {form.guests.length}
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* STEP 3: Configuración de partidos */}
+              {createStep === 3 && (
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "0.7rem",
+                  }}
+                >
+                  {/* Partidos */}
+                  <div>
+                    <label
+                      style={{
+                        fontSize: "0.75rem",
+                        fontWeight: 600,
+                        display: "block",
+                        marginBottom: "0.2rem",
+                      }}
+                    >
+                      Número de partidos a crear
+                    </label>
+
+                    <input
+                      type="range"
+                      min={6}
+                      max={18}
+                      value={form.matchCount}
+                      onChange={(e) =>
+                        handleFormChange(
+                          "matchCount",
+                          Number(e.target.value) || 1
+                        )
+                      }
+                      style={{
+                        width: "100%",
+                        cursor: "pointer",
+                      }}
+                    />
+
+                    <div
+                      style={{
+                        marginTop: "0.45rem",
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: "0.3rem",
+                        padding: "0.5rem 0.55rem",
+                        borderRadius: "0.8rem",
+                        border: "1px solid var(--border)",
+                        background: "var(--bg)",
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "center",
+                          fontSize: "0.78rem",
+                        }}
+                      >
+                        <span style={{ fontWeight: 600 }}>
+                          {form.matchCount} partidos totales
+                        </span>
+                        <span
+                          style={{
+                            fontSize: "0.72rem",
+                            color: "var(--muted)",
+                          }}
+                        >
+                          ~{approxMatchesPerPlayer} partidos por jugador
+                        </span>
+                      </div>
+
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          fontSize: "0.72rem",
+                          color: "var(--muted)",
+                        }}
+                      >
+                        <span>Jugadores seleccionados:</span>
+                        <span style={{ fontWeight: 500 }}>
+                          {totalPlayersForm} jugador
+                          {totalPlayersForm === 1 ? "" : "es"}
+                        </span>
+                      </div>
+
+                      {matchesRecommendation && (
+                        <p
+                          style={{
+                            margin: 0,
+                            marginTop: "0.1rem",
+                            fontSize: "0.7rem",
+                            color: "var(--muted)",
+                          }}
+                        >
+                          {matchesRecommendation}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Canchas */}
+                  <div>
+                    <label
+                      style={{
+                        fontSize: "0.75rem",
+                        fontWeight: 600,
+                        display: "block",
+                        marginBottom: "0.2rem",
+                      }}
+                    >
+                      Canchas simultáneas
+                    </label>
+                    <div
+                      style={{
+                        display: "flex",
+                        gap: "0.4rem",
+                      }}
+                    >
+                      {[1, 2].map((n) => {
+                        const active = form.courts === n;
+                        const disabled = n === 2 && totalPlayersForm < 8;
+
+                        return (
+                          <button
+                            key={n}
+                            type="button"
+                            disabled={disabled}
+                            onClick={() => {
+                              if (disabled) return;
+                              handleFormChange("courts", n);
+                            }}
+                            style={{
+                              flex: 1,
+                              borderRadius: "999px",
+                              border: active
+                                ? "1px solid var(--accent)"
+                                : "1px solid var(--border)",
+                              padding: "0.4rem 0.5rem",
+                              background: active
+                                ? "var(--accent-soft)"
+                                : "var(--bg)",
+                              color: active
+                                ? "var(--accent)"
+                                : "var(--muted)",
+                              fontSize: "0.8rem",
+                              cursor: disabled ? "not-allowed" : "pointer",
+                              opacity: disabled ? 0.5 : 1,
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              gap: "0.3rem",
+                            }}
+                          >
+                            <Icon
+                              name="court"
+                              size={14}
+                              color={
+                                active ? "var(--accent)" : "var(--muted)"
+                              }
+                            />
+                            {n === 1
+                              ? "1 cancha"
+                              : "2 canchas (mín. 8 jugadores)"}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <p
+                      style={{
+                        margin: 0,
+                        marginTop: "0.25rem",
+                        fontSize: "0.7rem",
+                        color: "var(--muted)",
+                      }}
+                    >
+                      Para usar 2 canchas necesitas al menos 8 jugadores
+                      seleccionados.
+                    </p>
+                  </div>
+
+                  {/* Resumen rápido */}
+                  <div
+                    style={{
+                      borderRadius: "0.8rem",
+                      padding: "0.5rem 0.6rem",
+                      backgroundColor: "var(--bg-elevated)",
+                      border: "1px dashed var(--border)",
+                      fontSize: "0.78rem",
+                    }}
+                  >
+                    Total de jugadores:{" "}
+                    <strong>
+                      {totalPlayersForm >= 4
+                        ? totalPlayersForm
+                        : `${totalPlayersForm} (mínimo 4)`}
+                    </strong>
+                    <br />
+                    Partidos a crear: <strong>{form.matchCount}</strong> •
+                    Aprox. <strong>{approxMatchesPerPlayer}</strong> partidos
+                    por jugador.
+                    <br />
+                    <span
+                      style={{
+                        display: "inline-block",
+                        marginTop: "0.25rem",
+                        fontSize: "0.72rem",
+                        color: "var(--muted)",
+                      }}
+                    >
+                      En el siguiente paso verás el resumen y podrás revisar o
+                      recalcular los emparejamientos.
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {/* STEP 4: Resumen */}
+              {createStep === 4 && (
+                <div
+                  style={{
+                    marginTop: "0.2rem",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "0.7rem",
+                  }}
+                >
+                  <div
+                    style={{
+                      borderRadius: "0.9rem",
+                      border: "1px solid var(--border)",
+                      padding: "0.65rem 0.7rem",
+                      background: "var(--bg)",
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: "0.6rem",
+                    }}
+                  >
+                    {/* Header del resumen */}
+                    <div
+                      style={{
+                        display: "flex",
+                        gap: "0.6rem",
+                        alignItems: "center",
+                      }}
+                    >
+                      <div
+                        style={{
+                          width: 34,
+                          height: 34,
+                          borderRadius: "0.9rem",
+                          background:
+                            "linear-gradient(135deg, rgba(59,130,246,0.95), rgba(16,185,129,0.95))",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          flexShrink: 0,
+                        }}
+                      >
+                        <Icon name="tournament" size={18} color="#ffffff" />
+                      </div>
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        <p
+                          style={{
+                            margin: 0,
+                            fontSize: ".9rem",
+                            color: "var(--muted)",
+                            textTransform: "uppercase",
+                            letterSpacing: "0.06em",
+                          }}
+                        >
+                          Resumen del torneo
+                        </p>
+                        <h3
+                          style={{
+                            margin: 0,
+                            marginTop: "0.1rem",
+                            fontSize: "0.9rem",
+                          }}
+                        >
+                          {buildPreviewName()}
+                        </h3>
+                      </div>
+                    </div>
+
+                    {/* Stats rápidas */}
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "1fr 1fr",
+                        gap: "0.55rem",
+                      }}
+                    >
+                      <div
+                        style={{
+                          borderRadius: "0.75rem",
+                          padding: "0.4rem 0.45rem",
+                          background: "var(--bg-elevated)",
+                        }}
+                      >
+                        <p
+                          style={{
+                            margin: 0,
+                            fontSize: "0.68rem",
+                            color: "var(--muted)",
+                          }}
+                        >
+                          Partidos
+                        </p>
+                        <p
+                          style={{
+                            margin: 0,
+                            marginTop: "0.05rem",
+                            fontSize: "0.95rem",
+                            fontWeight: 700,
+                          }}
+                        >
+                          {form.matchCount}
+                        </p>
+                      </div>
+
+                      <div
+                        style={{
+                          borderRadius: "0.75rem",
+                          padding: "0.4rem 0.45rem",
+                          background: "var(--bg-elevated)",
+                        }}
+                      >
+                        <p
+                          style={{
+                            margin: 0,
+                            fontSize: "0.68rem",
+                            color: "var(--muted)",
+                          }}
+                        >
+                          Partidos por jugador
+                        </p>
+                        <p
+                          style={{
+                            margin: 0,
+                            marginTop: "0.05rem",
+                            fontSize: "0.95rem",
+                            fontWeight: 700,
+                          }}
+                        >
+                          ~{approxMatchesPerPlayer}
+                        </p>
+                      </div>
+
+                      <div
+                        style={{
+                          borderRadius: "0.75rem",
+                          padding: "0.4rem 0.45rem",
+                          background: "var(--bg-elevated)",
+                        }}
+                      >
+                        <p
+                          style={{
+                            margin: 0,
+                            fontSize: "0.68rem",
+                            color: "var(--muted)",
+                          }}
+                        >
+                          Jugadores
+                        </p>
+                        <p
+                          style={{
+                            margin: 0,
+                            marginTop: "0.05rem",
+                            fontSize: "0.95rem",
+                            fontWeight: 700,
+                          }}
+                        >
+                          {totalPlayersForm}
+                        </p>
+                      </div>
+
+                      <div
+                        style={{
+                          borderRadius: "0.75rem",
+                          padding: "0.4rem 0.45rem",
+                          background: "var(--bg-elevated)",
+                        }}
+                      >
+                        <p
+                          style={{
+                            margin: 0,
+                            fontSize: "0.68rem",
+                            color: "var(--muted)",
+                          }}
+                        >
+                          Canchas simultáneas
+                        </p>
+                        <p
+                          style={{
+                            margin: 0,
+                            marginTop: "0.05rem",
+                            fontSize: "0.95rem",
+                            fontWeight: 700,
+                          }}
+                        >
+                          {form.courts}
+                        </p>
+                      </div>
+                    </div>
+
+                    {matchesRecommendation && (
+                      <p
+                        style={{
+                          margin: 0,
+                          fontSize: "0.7rem",
+                          color: "var(--muted)",
+                        }}
+                      >
+                        {matchesRecommendation}
+                      </p>
+                    )}
+
+                  {/* Jugadores */}
+                  {allPreviewPlayersDetailed.length > 0 && (
+                    <div
+                      style={{
+                        borderRadius: "0.8rem",
+                        padding: "0.55rem 0.6rem",
+                        background: "var(--bg-elevated)",
+                      }}
+                    >
+                      <p
+                        style={{
+                          margin: 0,
+                          fontSize: "0.72rem",
+                          color: "var(--muted)",
+                          marginBottom: "0.35rem",
+                        }}
+                      >
+                        Jugadores incluidos ({allPreviewPlayersDetailed.length})
+                      </p>
+                      <div
+                        style={{
+                          display: "flex",
+                          flexWrap: "wrap",
+                          gap: "0.4rem",
+                        }}
+                      >
+                        {allPreviewPlayersDetailed.map((player) => (
+                          <div
+                            key={player.id}
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: "0.35rem",
+                              padding: "0.25rem 0.6rem",
+                              borderRadius: "999px",
+                              background: "var(--bg)",
+                              fontSize: "0.78rem",
+                              boxShadow:
+                                "0 1px 3px rgba(15,23,42,0.18)",
+                            }}
+                          >
+                            <div
+                              style={{
+                                width: 32,
+                                height: 32,
+                                borderRadius: "999px",
+                                overflow: "hidden",
+                                background:
+                                  "radial-gradient(circle at 30% 30%, rgba(59,130,246,0.85), rgba(15,23,42,1))",
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                fontSize: "0.85rem",
+                                color: "#ffffff",
+                                flexShrink: 0,
+                              }}
+                            >
+                              {player.profilePicture ? (
+                                <img
+                                  src={player.profilePicture}
+                                  alt={player.name}
+                                  style={{
+                                    width: "100%",
+                                    height: "100%",
+                                    objectFit: "cover",
+                                  }}
+                                />
+                              ) : (
+                                player.name[0]?.toUpperCase()
+                              )}
+                            </div>
+                            <span>
+                              {player.name}
+                              {player.isGuest ? " (invitado)" : ""}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                    {/* Botón para ver / recalcular emparejamientos */}
+                    <button
+                      type="button"
+                      onClick={handleGeneratePreview}
+                      style={{
+                        marginTop: "0.1rem",
+                        borderRadius: "0.8rem",
+                        border: "1px solid var(--border)",
+                        padding: "0.5rem 0.6rem",
+                        background: "var(--bg-elevated)",
+                        color: "var(--fg)",
+                        fontSize: "0.8rem",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        gap: "0.35rem",
+                        cursor: "pointer",
+                      }}
+                    >
+                      <Icon name="eye" size={14} color="var(--accent)" />
+                      Ver partidos generados / recalcular emparejamientos
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Mensaje de error dentro del contenido */}
+              {errorMsg && (
+                <p
+                  style={{
+                    margin: 0,
+                    fontSize: "0.75rem",
+                    color: "#fca5a5",
+                  }}
+                >
+                  {errorMsg}
+                </p>
+              )}
+            </div>
+
+            {/* Navegación inferior */}
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "0.5rem",
+                marginTop: "0.8rem",
+              }}
+            >
+            <button
+              type="button"
+              onClick={() => {
+                resetMessages();
+                if (createStep === 1) {
+                  setShowCreate(false);
+                  setCreateStep(1);
+                  setShowInactivePlayers(false);
+                  return;
+                }
+                setCreateStep((prev) => Math.max(1, prev - 1));
+              }}
+              style={{
+                flex: 1,
+                borderRadius: "0.75rem",
+                border: "1px solid var(--border)",
+                background: "var(--bg-elevated)",
+                padding: "0.5rem 0.6rem",
+                fontSize: "0.85rem",
+                fontWeight: 500,
+                color: "var(--fg)",
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                transition: "background 0.15s ease, border-color 0.15s ease",
+              }}
+            >
+              {createStep === 1 ? "Cancelar" : "Atrás"}
+            </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  resetMessages();
+                  if (createStep === 1) {
+                    setCreateStep(2);
+                    return;
+                  }
+                  if (createStep === 2) {
+                    const total = form.players.length + form.guests.length;
+                    if (total < 4) {
+                      setErrorMsg(
+                        "Selecciona al menos 4 jugadores (club + invitados)."
+                      );
+                      return;
+                    }
+                    setCreateStep(3);
+                    return;
+                  }
+                  if (createStep === 3) {
+                    setCreateStep(4);
+                    return;
+                  }
+                  if (createStep === 4) {
+                    // Crear torneo directamente desde el resumen
+                    handleCreateTournament();
+                  }
+                }}
+                style={{
+                  flex: 1.2,
                   borderRadius: "0.9rem",
-                  border: "1px solid var(--border)",
+                  border: "none",
                   padding: "0.55rem 0.7rem",
-                  background: "var(--bg)",
+                  background:
+                    "linear-gradient(135deg, var(--accent), rgba(59,130,246,0.9))",
+                  color: "#ffffff",
                   fontSize: "0.85rem",
-                  color: "var(--fg)",
-                  fontWeight: 500,
-                  cursor: saving ? "default" : "pointer",
+                  fontWeight: 600,
+                  cursor: "pointer",
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
                   gap: "0.3rem",
                 }}
               >
-                <Icon name="eye" size={14} color="var(--muted)" />
-                Generar vista previa
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  setShowCreate(false);
-                  setPreviewMatches([]);
-                  setShowPreview(false);
-                  resetMessages();
-                }}
-                disabled={saving}
-                style={{
-                  width: "100%",
-                  borderRadius: "0.9rem",
-                  border: "1px solid var(--border)",
-                  padding: "0.55rem 0.7rem",
-                  background: "transparent",
-                  fontSize: "0.85rem",
-                  color: "var(--muted)",
-                  cursor: saving ? "default" : "pointer",
-                }}
-              >
-                Cancelar
+                {createStep === 4 ? (
+                  <>
+                    <Icon name="check" size={14} color="#ffffff" />
+                    Crear torneo
+                  </>
+                ) : (
+                  "Siguiente"
+                )}
               </button>
             </div>
-          </form>
-        </section>
+          </div>
+        </div>
       )}
 
-      {/* TORNEOS ACTIVOS */}
+{/* TORNEOS ACTIVOS */}
       <section>
         <h2
           style={{

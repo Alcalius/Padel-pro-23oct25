@@ -243,13 +243,10 @@ export default function TorneoJugar() {
   // -----------------------------------
   // Derivados (sin hooks)
   // -----------------------------------
-  const pendingMatches = matches.filter((m) => m.status === "pending");
+const pendingMatches = matches.filter((m) => m.status === "pending");
 
-  const sortedPendingMatches = [...pendingMatches].sort((a, b) => {
-    const da = a.createdAt || "";
-    const db = b.createdAt || "";
-    return db.localeCompare(da); // más nuevo primero
-  });
+// 👉 Respetar el orden tal cual está guardado en el array
+const sortedPendingMatches = [...pendingMatches];
 
   const maxCourts =
     tournament?.maxCourts ||

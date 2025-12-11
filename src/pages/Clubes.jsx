@@ -136,15 +136,20 @@ export default function Clubes() {
         return;
       }
 
-      const payload = {
-        name: createForm.name.trim(),
-        description: createForm.description.trim(),
-        password: createForm.password.trim() || "",
-        createdBy: userId,
-        members: [userId],
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      };
+const payload = {
+  name: newClubName.trim(),
+  description: newClubDescription.trim() || "",
+  city: newClubCity.trim() || "",
+  createdBy: userId,
+  createdAt: new Date().toISOString(),
+  updatedAt: new Date().toISOString(),
+  // miembros del club
+  members: [userId],
+  // nuevo: estatus de cada miembro (true = activo, false = inactivo)
+  memberStatus: {
+    [userId]: true, // el creador empieza como activo
+  },
+};
 
       const docRef = await addDoc(collection(db, "clubs"), payload);
 
@@ -192,13 +197,22 @@ export default function Clubes() {
         return;
       }
 
-      const ref = doc(db, "clubs", club.id);
-      await updateDoc(ref, {
-        members: Array.isArray(club.members)
-          ? [...club.members, userId]
-          : [userId],
-        updatedAt: new Date().toISOString(),
-      });
+const ref = doc(db, "clubs", club.id);
+
+// memberStatus actual del club (puede no existir aún)
+const currentStatus = club.memberStatus || {};
+
+// nuevo objeto con el usuario marcado como activo
+const newStatus = {
+  ...currentStatus,
+  [userId]: true,
+};
+
+await updateDoc(ref, {
+  members: newMembers,
+  memberStatus: newStatus,
+  updatedAt: new Date().toISOString(),
+});
 
       setJoinClubId("");
       setJoinPassword("");
@@ -229,62 +243,55 @@ export default function Clubes() {
   };
 
   // Cargar info básica de miembros (nombre, email, foto) cuando cambia selectedClub
-  useEffect(() => {
-    const loadMembers = async () => {
-      if (!selectedClub || !Array.isArray(selectedClub.members)) {
-        setMembersInfo({});
-        return;
-      }
+useEffect(() => {
+  const loadMembers = async () => {
+    if (!selectedClub || !Array.isArray(selectedClub.members)) {
+      setMembersInfo({});
+      return;
+    }
 
-      setLoadingMembers(true);
-      const result = {};
+    const result = {};
+    const memberStatus = selectedClub.memberStatus || {};
 
+    for (const uid of selectedClub.members) {
       try {
-        await Promise.all(
-          selectedClub.members.map(async (uid) => {
-            try {
-              const refUser = doc(db, "users", uid);
-              const snap = await getDoc(refUser);
-              if (snap.exists()) {
-                const data = snap.data();
-                const name =
-                  data.name ||
-                  data.displayName ||
-                  (data.email ? data.email.split("@")[0] : "Jugador");
-                const photo =
-                  data.profilePicture || data.photoURL || "";
-                result[uid] = {
-                  name,
-                  email: data.email || "",
-                  photoURL: photo,
-                };
-              } else {
-                result[uid] = {
-                  name: "Jugador",
-                  email: "",
-                  photoURL: "",
-                };
-              }
-            } catch (err) {
-              console.error("Error cargando usuario:", err);
-              result[uid] = {
-                name: "Jugador",
-                email: "",
-                photoURL: "",
-              };
-            }
-          })
-        );
-        setMembersInfo(result);
-      } catch (err) {
-        console.error("Error cargando miembros:", err);
-      } finally {
-        setLoadingMembers(false);
-      }
-    };
+        const refUser = doc(db, "users", uid);
+        const snapUser = await getDoc(refUser);
 
-    loadMembers();
-  }, [selectedClub]);
+        // por defecto, si no hay dato, lo consideramos activo (true)
+        const statusValue = memberStatus[uid];
+        const isActive =
+          typeof statusValue === "boolean" ? statusValue : true;
+
+        if (snapUser.exists()) {
+          const data = snapUser.data();
+          result[uid] = {
+            name:
+              data.name ||
+              data.displayName ||
+              (data.email ? data.email.split("@")[0] : "Jugador"),
+            email: data.email || "",
+            photoURL: data.profilePicture || data.photoURL || "",
+            isActive,
+          };
+        } else {
+          result[uid] = {
+            name: "Jugador",
+            email: "",
+            photoURL: "",
+            isActive,
+          };
+        }
+      } catch (err) {
+        console.error("Error cargando miembro:", err);
+      }
+    }
+
+    setMembersInfo(result);
+  };
+
+  loadMembers();
+}, [selectedClub]);
 
   // Actualizar campos de edición de club (admin)
   const handleEditClubFieldChange = (field, value) => {
@@ -384,8 +391,15 @@ export default function Clubes() {
 
       const newMembers = club.members.filter((id) => id !== userId);
       const ref = doc(db, "clubs", club.id);
+
+      // quitamos también su estatus del mapa
+      const currentStatus = club.memberStatus || {};
+      const newStatus = { ...currentStatus };
+      delete newStatus[userId];
+
       await updateDoc(ref, {
         members: newMembers,
+        memberStatus: newStatus,
         updatedAt: new Date().toISOString(),
       });
 
@@ -430,12 +444,19 @@ export default function Clubes() {
     setSaving(true);
 
     try {
-      const newMembers = selectedClub.members.filter((id) => id !== memberId);
-      const ref = doc(db, "clubs", selectedClub.id);
-      await updateDoc(ref, {
-        members: newMembers,
-        updatedAt: new Date().toISOString(),
-      });
+    const newMembers = selectedClub.members.filter((id) => id !== memberId);
+    const ref = doc(db, "clubs", selectedClub.id);
+
+    // quitamos también su estatus del mapa
+    const currentStatus = selectedClub.memberStatus || {};
+    const newStatus = { ...currentStatus };
+    delete newStatus[memberId];
+
+    await updateDoc(ref, {
+      members: newMembers,
+      memberStatus: newStatus,
+      updatedAt: new Date().toISOString(),
+    });
 
       setSuccessMsg("Miembro eliminado del club.");
     } catch (err) {
@@ -445,6 +466,43 @@ export default function Clubes() {
       setSaving(false);
     }
   };
+
+// Cambiar estatus activo / inactivo (solo admin)
+const handleToggleMemberStatus = async (memberId) => {
+  if (!selectedClub || !isAdmin || !memberId) return;
+  if (!Array.isArray(selectedClub.members)) return;
+
+  resetMessages();
+  setSaving(true);
+
+  try {
+    const currentStatus = selectedClub.memberStatus || {};
+    const current = currentStatus[memberId];
+
+    // por defecto true si no hay nada
+    const isActiveNow =
+      typeof current === "boolean" ? current : true;
+
+    const newStatus = {
+      ...currentStatus,
+      [memberId]: !isActiveNow,
+    };
+
+    const ref = doc(db, "clubs", selectedClub.id);
+    await updateDoc(ref, {
+      memberStatus: newStatus,
+      updatedAt: new Date().toISOString(),
+    });
+
+    setSuccessMsg("Estatus del jugador actualizado.");
+  } catch (err) {
+    console.error("Error cambiando estatus de miembro:", err);
+    setErrorMsg("No se pudo actualizar el estatus del jugador.");
+  } finally {
+    setSaving(false);
+  }
+};
+
 
   const activeClubInfo = useMemo(
     () =>
@@ -1227,16 +1285,23 @@ export default function Clubes() {
           </div>
 
           {/* Miembros */}
-          <div
+          <section
             style={{
-              marginBottom: "0.7rem",
+              borderRadius: "1rem",
+              padding: "1rem 1.1rem",
+              border: "1px solid var(--border)",
+              background: "var(--bg-elevated)",
+              display: "flex",
+              flexDirection: "column",
+              gap: "0.7rem",
             }}
           >
             <div
               style={{
                 display: "flex",
-                justifyContent: "space-between",
                 alignItems: "center",
+                justifyContent: "space-between",
+                gap: "0.5rem",
                 marginBottom: "0.3rem",
               }}
             >
@@ -1244,84 +1309,65 @@ export default function Clubes() {
                 style={{
                   margin: 0,
                   fontSize: "0.9rem",
+                  fontWeight: 600,
                 }}
               >
-                Jugadores ({selectedClub.members?.length || 0})
+                Miembros ({selectedClub.members?.length || 0})
               </h3>
             </div>
 
-            {loadingMembers ? (
-              <p
-                style={{
-                  margin: 0,
-                  fontSize: "0.8rem",
-                  color: "var(--muted)",
-                }}
-              >
-                Cargando jugadores...
-              </p>
-            ) : !selectedClub.members ||
-              !Array.isArray(selectedClub.members) ||
-              selectedClub.members.length === 0 ? (
-              <p
-                style={{
-                  margin: 0,
-                  fontSize: "0.8rem",
-                  color: "var(--muted)",
-                }}
-              >
-                Este club aún no tiene jugadores.
-              </p>
-            ) : (
+            {selectedClub.members && selectedClub.members.length > 0 ? (
               <div
                 style={{
                   display: "flex",
                   flexDirection: "column",
-                  gap: "0.35rem",
+                  gap: "0.4rem",
                 }}
               >
                 {selectedClub.members.map((memberId) => {
-                  const info = membersInfo[memberId] || {};
-                  const isCurrent = memberId === userId;
-                  const letter =
-                    (info.name || "J")[0]?.toUpperCase() || "J";
+                  const info = membersInfo[memberId];
+                  const isCurrentUser = memberId === userId;
+                  const isAdminMember = memberId === selectedClub.createdBy;
+                  const isActiveMember =
+                    info?.isActive !== false; // si no hay dato, lo vemos como activo
 
                   return (
                     <div
                       key={memberId}
                       style={{
-                        borderRadius: "0.7rem",
-                        border: "1px solid var(--border)",
-                        padding: "0.35rem 0.5rem",
                         display: "flex",
                         alignItems: "center",
                         justifyContent: "space-between",
-                        gap: "0.4rem",
+                        gap: "0.5rem",
+                        padding: "0.45rem 0.6rem",
+                        borderRadius: "0.7rem",
+                        background: "var(--bg-subtle)",
                       }}
                     >
+                      {/* Izquierda: avatar + datos */}
                       <div
                         style={{
                           display: "flex",
                           alignItems: "center",
-                          gap: "0.45rem",
+                          gap: "0.55rem",
+                          minWidth: 0,
                         }}
                       >
                         <div
                           style={{
-                            width: 28,
-                            height: 28,
+                            width: 32,
+                            height: 32,
                             borderRadius: "999px",
-                            backgroundColor: "var(--bg-elevated)",
                             overflow: "hidden",
+                            background: "var(--bg-soft)",
                             display: "flex",
                             alignItems: "center",
                             justifyContent: "center",
-                            fontSize: "0.78rem",
+                            fontSize: "0.8rem",
                             fontWeight: 600,
-                            flexShrink: 0,
                           }}
                         >
-                          {info.photoURL ? (
+                          {info?.photoURL ? (
                             <img
                               src={info.photoURL}
                               alt={info.name || "Jugador"}
@@ -1332,69 +1378,140 @@ export default function Clubes() {
                               }}
                             />
                           ) : (
-                            letter
+                            (info?.name || "Jugador")
+                              .charAt(0)
+                              .toUpperCase()
                           )}
                         </div>
-                        <div>
+
+                        <div style={{ minWidth: 0 }}>
                           <div
                             style={{
-                              fontSize: "0.82rem",
-                              fontWeight: 500,
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 6,
                             }}
                           >
-                            {info.name || "Jugador"}
-                            {isCurrent && (
+                            <span
+                              style={{
+                                fontSize: "0.85rem",
+                                fontWeight: 500,
+                                whiteSpace: "nowrap",
+                                textOverflow: "ellipsis",
+                                overflow: "hidden",
+                                maxWidth: 150,
+                              }}
+                            >
+                              {info?.name || "Jugador"}
+                            </span>
+                            {isAdminMember && (
                               <span
                                 style={{
-                                  marginLeft: "0.3rem",
                                   fontSize: "0.7rem",
-                                  color: "var(--muted)",
+                                  padding: "2px 6px",
+                                  borderRadius: 999,
+                                  background: "rgba(37,99,235,0.1)",
                                 }}
                               >
-                                (tú)
+                                Admin
                               </span>
                             )}
                           </div>
-                          {info.email && (
-                            <div
+                          {info?.email && (
+                            <span
                               style={{
-                                fontSize: "0.72rem",
+                                display: "block",
+                                fontSize: "0.75rem",
                                 color: "var(--muted)",
+                                whiteSpace: "nowrap",
+                                textOverflow: "ellipsis",
+                                overflow: "hidden",
+                                maxWidth: 180,
                               }}
                             >
                               {info.email}
-                            </div>
+                            </span>
                           )}
                         </div>
                       </div>
 
-                      {isAdmin && !isCurrent && (
-                        <button
-                          type="button"
-                          onClick={() => handleRemoveMember(memberId)}
+                      {/* Derecha: estatus + acciones admin */}
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "0.4rem",
+                        }}
+                      >
+                        <span
                           style={{
-                            border: "none",
-                            borderRadius: "999px",
-                            padding: "0.25rem 0.45rem",
-                            backgroundColor: "transparent",
-                            color: "#fecaca",
-                            display: "flex",
-                            alignItems: "center",
-                            gap: "0.2rem",
                             fontSize: "0.7rem",
-                            cursor: "pointer",
+                            padding: "2px 8px",
+                            borderRadius: 999,
+                            background: isActiveMember
+                              ? "rgba(34,197,94,0.14)"
+                              : "rgba(148,163,184,0.18)",
                           }}
                         >
-                          <Icon name="delete" size={14} color="#fecaca" />
-                          Quitar
-                        </button>
-                      )}
+                          {isActiveMember ? "Activo" : "Inactivo"}
+                        </span>
+
+                        {isAdmin && !isCurrentUser && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                handleToggleMemberStatus(memberId)
+                              }
+                              style={{
+                                border: "none",
+                                borderRadius: 999,
+                                padding: "4px 10px",
+                                fontSize: "0.7rem",
+                                cursor: "pointer",
+                                background: "var(--bg-elevated)",
+                              }}
+                            >
+                              {isActiveMember
+                                ? "Marcar inactivo"
+                                : "Marcar activo"}
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() =>
+                                handleRemoveMember(memberId)
+                              }
+                              style={{
+                                border: "none",
+                                borderRadius: 999,
+                                padding: "4px 10px",
+                                fontSize: "0.7rem",
+                                cursor: "pointer",
+                                background: "rgba(239,68,68,0.1)",
+                              }}
+                            >
+                              Quitar
+                            </button>
+                          </>
+                        )}
+                      </div>
                     </div>
                   );
                 })}
               </div>
+            ) : (
+              <p
+                style={{
+                  fontSize: "0.8rem",
+                  color: "var(--muted)",
+                  margin: 0,
+                }}
+              >
+                Todavía no hay miembros en este club.
+              </p>
             )}
-          </div>
+          </section>
 
           {/* Acciones del club */}
           <div
