@@ -86,6 +86,12 @@ export default function TorneoJugar() {
     2: { team1: 0, team2: 0 },
   });
 
+  // Para forzar captura de ambos resultados antes de guardar (2 canchas)
+  const [scoreTouched, setScoreTouched] = useState({
+    1: false,
+    2: false,
+  });
+
   // Partido personalizado
   const [showCustom, setShowCustom] = useState(false);
   const [customSelected, setCustomSelected] = useState([]);
@@ -240,62 +246,101 @@ export default function TorneoJugar() {
     load();
   }, [tournamentId]);
 
-  // -----------------------------------
-  // Derivados (sin hooks)
-  // -----------------------------------
+// -----------------------------------
+// Derivados (sin hooks)
+// -----------------------------------
+const maxCourts =
+  tournament?.maxCourts ||
+  tournament?.courts ||
+  tournament?.activeCourts ||
+  1;
+
+// ----------------------------
+// Helpers: evitar repetidos en 2 canchas
+// ----------------------------
+const getMatchPlayers = (match) => [
+  ...((match && match.team1) || []),
+  ...((match && match.team2) || []),
+];
+
+const matchesOverlap = (a, b) => {
+  if (!a || !b) return false;
+  const setA = new Set(getMatchPlayers(a));
+  return getMatchPlayers(b).some((pid) => setA.has(pid));
+};
+
+// Si los 2 primeros partidos pendientes chocan en jugadores,
+// sube (a índice 1) el primer partido más abajo que NO choque.
+const normalizeTopTwoPending = (pendingList) => {
+  if (!pendingList || pendingList.length < 2) return pendingList;
+
+  const first = pendingList[0];
+  const second = pendingList[1];
+
+  if (!matchesOverlap(first, second)) return pendingList; // todo bien
+
+  // buscar candidato desde índice 2
+  const idx = pendingList.findIndex(
+    (m, i) => i >= 2 && !matchesOverlap(first, m)
+  );
+  if (idx === -1) return pendingList; // no hay opción sin choque
+
+  const copy = [...pendingList];
+  const [candidate] = copy.splice(idx, 1);
+  copy.splice(1, 0, candidate);
+  return copy;
+};
+
 const pendingMatches = matches.filter((m) => m.status === "pending");
 
 // 👉 Respetar el orden tal cual está guardado en el array
-const sortedPendingMatches = [...pendingMatches];
+const sortedPendingMatches =
+  maxCourts >= 2
+    ? normalizeTopTwoPending([...pendingMatches])
+    : [...pendingMatches];
 
-  const maxCourts =
-    tournament?.maxCourts ||
-    tournament?.courts ||
-    tournament?.activeCourts ||
-    1;
+const matchCourt1 = sortedPendingMatches[0] || null;
+const matchCourt2 = maxCourts >= 2 ? sortedPendingMatches[1] || null : null;
 
-  const matchCourt1 = sortedPendingMatches[0] || null;
-  const matchCourt2 =
-    maxCourts >= 2 ? sortedPendingMatches[1] || null : null;
+// Partidos realmente "pendientes" (no en cancha 1/2)
+const displayPendingMatches = sortedPendingMatches.filter(
+  (m) =>
+    m.id !== (matchCourt1 && matchCourt1.id) &&
+    m.id !== (matchCourt2 && matchCourt2.id)
+);
 
-  // Partidos realmente "pendientes" (no en cancha 1/2)
-  const displayPendingMatches = sortedPendingMatches.filter(
-    (m) =>
-      m.id !== (matchCourt1 && matchCourt1.id) &&
-      m.id !== (matchCourt2 && matchCourt2.id)
-  );
+// Jugadores en espera (no en cancha 1 ni 2)
+let waitingPlayers = [];
+if (tournament) {
+  const allIds = [
+    ...(Array.isArray(tournament.players) ? tournament.players : []),
+    ...(Array.isArray(tournament.guestPlayers)
+      ? tournament.guestPlayers.map((_, idx) => `guest-${idx}`)
+      : []),
+  ];
 
-  // Jugadores en espera (no en cancha 1 ni 2)
-  let waitingPlayers = [];
-  if (tournament) {
-    const allIds = [
+  const inCourts = new Set();
+  if (matchCourt1) {
+    (matchCourt1.team1 || []).forEach((id) => inCourts.add(id));
+    (matchCourt1.team2 || []).forEach((id) => inCourts.add(id));
+  }
+  if (matchCourt2) {
+    (matchCourt2.team1 || []).forEach((id) => inCourts.add(id));
+    (matchCourt2.team2 || []).forEach((id) => inCourts.add(id));
+  }
+
+  waitingPlayers = allIds.filter((id) => !inCourts.has(id));
+}
+
+const allTournamentPlayers = tournament
+  ? [
       ...(Array.isArray(tournament.players) ? tournament.players : []),
       ...(Array.isArray(tournament.guestPlayers)
         ? tournament.guestPlayers.map((_, idx) => `guest-${idx}`)
         : []),
-    ];
+    ]
+  : [];
 
-    const inCourts = new Set();
-    if (matchCourt1) {
-      (matchCourt1.team1 || []).forEach((id) => inCourts.add(id));
-      (matchCourt1.team2 || []).forEach((id) => inCourts.add(id));
-    }
-    if (matchCourt2) {
-      (matchCourt2.team1 || []).forEach((id) => inCourts.add(id));
-      (matchCourt2.team2 || []).forEach((id) => inCourts.add(id));
-    }
-
-    waitingPlayers = allIds.filter((id) => !inCourts.has(id));
-  }
-
-  const allTournamentPlayers = tournament
-    ? [
-        ...(Array.isArray(tournament.players) ? tournament.players : []),
-        ...(Array.isArray(tournament.guestPlayers)
-          ? tournament.guestPlayers.map((_, idx) => `guest-${idx}`)
-          : []),
-      ]
-    : [];
 
   // -----------------------------------
   // Sincronizar marcadores cuando cambian partidos en cancha
@@ -333,6 +378,11 @@ const sortedPendingMatches = [...pendingMatches];
     }
 
     setScores(newScores);
+    setScoreTouched({
+      1: false,
+      2: false,
+    });
+
   }, [matchCourt1, matchCourt2]);
 
   // -----------------------------------
@@ -340,6 +390,7 @@ const sortedPendingMatches = [...pendingMatches];
   // -----------------------------------
   const handleScoreChange = (courtIndex, team, value) => {
     const v = Math.max(0, Math.min(TOTAL_POINTS, value));
+    setScoreTouched((prev) => ({ ...prev, [courtIndex]: true }));
     setScores((prev) => {
       if (team === 1) {
         return {
@@ -363,6 +414,7 @@ const sortedPendingMatches = [...pendingMatches];
 
   const handleMarkDrawForCourt = (courtIndex) => {
     const half = TOTAL_POINTS / 2; // 2–2
+    setScoreTouched((prev) => ({ ...prev, [courtIndex]: true }));
     setScores((prev) => ({
       ...prev,
       [courtIndex]: { team1: half, team2: half },
@@ -548,6 +600,102 @@ const sortedPendingMatches = [...pendingMatches];
     await saveMatchResult(match, courtScores.team1, courtScores.team2);
   };
 
+const handleSaveBothCourtsResults = async () => {
+  if (maxCourts < 2 || !matchCourt1 || !matchCourt2) return;
+
+  if (!scoreTouched[1] || !scoreTouched[2]) {
+    alert("Primero captura el marcador de ambas canchas.");
+    return;
+  }
+
+  const s1 = scores[1] || { team1: 0, team2: 0 };
+  const s2 = scores[2] || { team1: 0, team2: 0 };
+
+  // Validaciones rápidas (mismas reglas que usas en saveMatchResult)
+  const isValidScore = (a, b) => {
+    if (a == null || b == null) return false;
+    if (Number.isNaN(a) || Number.isNaN(b)) return false;
+    if (a < 0 || b < 0 || a > 4 || b > 4) return false;
+    if (a + b !== TOTAL_POINTS) return false;
+    return true;
+  };
+
+  if (!isValidScore(s1.team1, s1.team2) || !isValidScore(s2.team1, s2.team2)) {
+    alert("Revisa los marcadores. Deben sumar 4 y estar entre 0 y 4.");
+    return;
+  }
+
+  setSavingResult(true);
+  try {
+    const nowIso = new Date().toISOString();
+
+    // ✅ Actualizamos LOS DOS partidos en un solo updateMatches (evita pisarse)
+    const updatedMatches = matches.map((m) => {
+      if (m.id === matchCourt1.id) {
+        return {
+          ...m,
+          scoreTeam1: s1.team1,
+          scoreTeam2: s1.team2,
+          status: "completed",
+          completedAt: nowIso,
+        };
+      }
+      if (m.id === matchCourt2.id) {
+        return {
+          ...m,
+          scoreTeam1: s2.team1,
+          scoreTeam2: s2.team2,
+          status: "completed",
+          completedAt: nowIso,
+        };
+      }
+      return m;
+    });
+
+    // Guardar en torneo (una sola escritura)
+    await updateDoc(doc(db, "tournaments", tournamentId), {
+      matches: updatedMatches,
+    });
+
+    setMatches(updatedMatches);
+
+    // (Opcional) Luego ya normalizamos la siguiente tanda con el estado actualizado
+    try {
+      const pendingAfter = updatedMatches.filter((m) => m.status === "pending");
+      const normalized = maxCourts >= 2 ? normalizeTopTwoPending(pendingAfter) : pendingAfter;
+
+      const changed =
+        normalized.length === pendingAfter.length &&
+        normalized.some((m, i) => m.id !== pendingAfter[i]?.id);
+
+      if (changed) {
+        // IMPORTANTE: savePendingOrder usa "matches" por dentro,
+        // así que hay que pasarle primero el estado correcto:
+        // aquí usamos directamente updatedMatches como base
+        const nonPending = updatedMatches.filter((m) => m.status !== "pending");
+        const reorderedAll = [...nonPending, ...normalized];
+
+        await updateDoc(doc(db, "tournaments", tournamentId), {
+          matches: reorderedAll,
+        });
+        setMatches(reorderedAll);
+      }
+    } catch (e) {
+      console.warn("No se pudo normalizar la siguiente tanda:", e);
+    }
+
+    alert("Marcadores guardados (ambas canchas).");
+
+    setScoreTouched({ 1: false, 2: false });
+  } catch (err) {
+    console.error("Error guardando ambos resultados:", err);
+    alert("No se pudieron guardar ambos resultados.");
+  } finally {
+    setSavingResult(false);
+  }
+};
+
+
   // -----------------------------------
   // Eliminar partido pendiente
   // -----------------------------------
@@ -574,39 +722,30 @@ const sortedPendingMatches = [...pendingMatches];
     }
   };
 
-  // -----------------------------------
-  // Reacomodar partidos pendientes (cola)
-  // -----------------------------------
-  const savePendingOrder = async (orderedPendingMatches) => {
-    setReorderingPending(true);
-    try {
-      const pendingOrderMap = {};
-      const baseTime = Date.now();
+// -----------------------------------
+// Reacomodar partidos pendientes (cola)
+// -----------------------------------
+    const savePendingOrder = async (orderedPendingMatches) => {
+      setReorderingPending(true);
+      try {
+        // Mantén en su orden todos los NO pendientes
+        const nonPending = matches.filter((m) => m.status !== "pending");
 
-      orderedPendingMatches.forEach((m, idx) => {
-        pendingOrderMap[m.id] = {
-          ...m,
-          createdAt: new Date(baseTime - idx).toISOString(),
-        };
-      });
+        // Reemplaza TODOS los pendientes por el nuevo orden
+        const updatedMatches = [...nonPending, ...orderedPendingMatches];
 
-      const updatedMatches = matches.map((m) => {
-        if (m.status !== "pending") return m;
-        const updated = pendingOrderMap[m.id];
-        return updated ? updated : m;
-      });
+        await updateDoc(doc(db, "tournaments", tournamentId), {
+          matches: updatedMatches,
+        });
 
-      await updateDoc(doc(db, "tournaments", tournamentId), {
-        matches: updatedMatches,
-      });
-      setMatches(updatedMatches);
-    } catch (err) {
-      console.error("Error reacomodando partidos pendientes:", err);
-      alert("No se pudo reacomodar el orden de los partidos.");
-    } finally {
-      setReorderingPending(false);
-    }
-  };
+        setMatches(updatedMatches);
+      } catch (err) {
+        console.error("Error reacomodando partidos pendientes:", err);
+        alert("No se pudo reacomodar el orden de los partidos.");
+      } finally {
+        setReorderingPending(false);
+      }
+    };
 
   const handleMovePendingMatch = async (matchId, direction) => {
     if (reorderingPending) return;
@@ -1261,25 +1400,51 @@ const sortedPendingMatches = [...pendingMatches];
                   marginTop: "0.1rem",
                 }}
               >
-                <button
-                  type="button"
-                  onClick={() => handleSaveResultForCourt(courtIndex)}
-                  disabled={savingResult}
-                  style={{
-                    borderRadius: "0.9rem",
-                    border: "none",
-                    padding: "0.5rem 0.9rem",
-                    background: "var(--accent)",
-                    fontSize: "0.8rem",
-                    cursor: savingResult ? "default" : "pointer",
-                    fontWeight: 600,
-                    color: "#ffffff",
-                    boxShadow: "0 0 0 1px rgba(15,23,42,0.2)",
-                    opacity: savingResult ? 0.8 : 1,
-                  }}
-                >
-                  {savingResult ? "Guardando..." : "Guardar resultado"}
-                </button>
+                {(() => {
+                  const otherCourt = courtIndex === 1 ? 2 : 1;
+                  const twoCourtsActive = maxCourts >= 2 && matchCourt1 && matchCourt2;
+                  const bothReady = scoreTouched[1] && scoreTouched[2];
+
+                  return (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (twoCourtsActive) {
+                          handleSaveBothCourtsResults();
+                        } else {
+                          handleSaveResultForCourt(courtIndex);
+                        }
+                      }}
+                      disabled={savingResult || (twoCourtsActive && !bothReady)}
+                      style={{
+                        borderRadius: "0.9rem",
+                        border: "none",
+                        padding: "0.5rem 0.9rem",
+                        background:
+                          twoCourtsActive && scoreTouched[courtIndex] && !bothReady
+                            ? "#16a34a"
+                            : "var(--accent)",
+                        fontSize: "0.8rem",
+                        cursor: savingResult ? "default" : "pointer",
+                        fontWeight: 600,
+                        color: "#ffffff",
+                        boxShadow: "0 0 0 1px rgba(15,23,42,0.2)",
+                        opacity: savingResult ? 0.8 : 1,
+                      }}
+                    >
+                    {savingResult
+                      ? "Guardando..."
+                      : twoCourtsActive
+                        ? bothReady
+                          ? "Guardar resultado"
+                          : scoreTouched[courtIndex]
+                            ? "Listo"
+                            : "Ingresa resultado"
+                        : "Guardar resultado"}
+                    </button>
+                  );
+                })()}
+
                 <button
                   type="button"
                   onClick={() => handleMarkDrawForCourt(courtIndex)}

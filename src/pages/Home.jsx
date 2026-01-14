@@ -189,6 +189,9 @@ export default function Home() {
   // NUEVO: estado para modales
   const [showRankingModal, setShowRankingModal] = useState(false);
   const [showMemberDetailModal, setShowMemberDetailModal] = useState(false);
+  const [showMatchModal, setShowMatchModal] = useState(false);
+  const [selectedMatch, setSelectedMatch] = useState(null);
+
 
   // NUEVO: animaciones
   const [plBarValue, setPlBarValue] = useState(0);
@@ -976,315 +979,372 @@ export default function Home() {
           </div>
         </section>
 
-{/* 3. TOP RANKING DEL CLUB */}
-<section style={{ marginTop: "0.9rem" }}>
-  <div
-    style={{
-      display: "flex",
-      justifyContent: "space-between",
-      alignItems: "center",
-      marginBottom: "0.5rem",
-    }}
-  >
-    <h3 style={{ margin: 0, fontSize: "0.95rem", fontWeight: 700 }}>
-      Top ranking del club
-    </h3>
-
-    <button
-      onClick={() => navigate("/ranking")}
-      style={{
-        background: "transparent",
-        border: "none",
-        color: "var(--accent)",
-        fontSize: "0.75rem",
-        fontWeight: 600,
-        cursor: "pointer",
-      }}
-    >
-      Ver ranking completo
-    </button>
-  </div>
-
-  {rankingLoading ? (
-    <div
-      style={{
-        display: "flex",
-        justifyContent: "space-between",
-        gap: "0.7rem",
-      }}
-    >
-      {Array.from({ length: 3 }).map((_, idx) => (
-        <div
-          key={idx}
-          style={{
-            flex: 1,
-            maxWidth: 140,
-            borderRadius: "1rem",
-            border: "1px solid var(--border)",
-            padding: "0.7rem 0.6rem",
-            background: "var(--bg-elevated)",
-          }}
-        />
-      ))}
-    </div>
-  ) : top3Members.length === 0 ? (
-    <p
-      style={{
-        margin: "0.3rem 0 0",
-        fontSize: "0.8rem",
-        color: "var(--muted)",
-      }}
-    >
-      Aún no hay ranking disponible.
-    </p>
-  ) : (
-    <div
-      style={{
-        display: "flex",
-        justifyContent:
-          top3Members.length === 1 ? "center" : "space-between",
-        gap: "0.7rem",
-      }}
-    >
-      {top3Members.map((m, index) => {
-        const isCurrentUser = m.id === userData?.id;
-
-        return (
-          <button
-            key={m.id}
-            type="button"
-            onClick={() => handleOpenMemberDetail(m)}
+        {/* 3. TOP RANKING DEL CLUB */}
+        <section style={{ marginTop: "0.9rem" }}>
+          <div
             style={{
-              flex: 1,
-              maxWidth: 140,
-              borderRadius: "1rem",
-              border: isCurrentUser
-                ? "2px solid var(--accent)"
-                : "1px solid var(--border)",
-              padding: "0.75rem 0.65rem",
-              background: "var(--bg-elevated)",
-              cursor: "pointer",
               display: "flex",
-              flexDirection: "column",
+              justifyContent: "space-between",
               alignItems: "center",
-              gap: "0.35rem",
+              marginBottom: "0.5rem",
             }}
           >
-            <span style={{ fontSize: "0.7rem", color: "var(--muted)" }}>
-              #{index + 1}
-            </span>
+            <h3 style={{ margin: 0, fontSize: "0.95rem", fontWeight: 700 }}>
+              Top ranking del club
+            </h3>
 
-            <div
+            <button
+              onClick={() => setShowRankingModal(true)}
               style={{
-                width: 72,
-                height: 72,
-                borderRadius: "999px",
-                overflow: "hidden",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                background: m.profilePicture
-                  ? "var(--bg)"
-                  : "radial-gradient(circle at 30% 20%, #4084d6ff, #174ab8ff)",
+                background: "transparent",
+                border: "none",
+                color: "var(--accent)",
+                fontSize: "0.75rem",
+                fontWeight: 600,
+                cursor: "pointer",
               }}
             >
-              {m.profilePicture ? (
-                <img
-                  src={m.profilePicture}
-                  alt={m.name}
-                  style={{
-                    width: "100%",
-                    height: "100%",
-                    objectFit: "cover",
-                  }}
-                />
-              ) : (
-                <span
-                  style={{
-                    fontSize: "1.5rem",
-                    fontWeight: 700,
-                    color: "#fff",
-                  }}
-                >
-                  {(m.name || "J")[0].toUpperCase()}
-                </span>
-              )}
-            </div>
+              Ver ranking completo
+            </button>
+          </div>
 
-            <div
-              style={{
-                textAlign: "center",
-                display: "flex",
-                flexDirection: "column",
-                gap: "0.05rem",
-              }}
-            >
-              <span
-                style={{
-                  fontSize: "0.85rem",
-                  fontWeight: 700,
-                  maxWidth: 130,
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
-                }}
-              >
-                {m.name}
-              </span>
-              <span
-                style={{
-                  fontSize: "0.74rem",
-                  color: "var(--muted)",
-                }}
-              >
-                {m.rankLabel}
-              </span>
-            </div>
-          </button>
-        );
-      })}
-    </div>
-  )}
-</section>
-
-        {/* 4. ACTIVIDAD RECIENTE (HOME) */}
-        <section style={{ marginTop: "0.8rem", marginBottom: "0.8rem" }}>
-          <h3
+        {rankingLoading ? (
+          <div
             style={{
-              margin: "0 0 0.4rem",
-              fontSize: "0.95rem",
+              display: "flex",
+              justifyContent: "space-between",
+              gap: "0.7rem",
             }}
           >
-            Actividad reciente
-          </h3>
+            {Array.from({ length: 3 }).map((_, idx) => (
+              <div
+                key={idx}
+                style={{
+                  flex: 1,
+                  maxWidth: 140,
+                  borderRadius: "1rem",
+                  border: "1px solid var(--border)",
+                  padding: "0.7rem 0.6rem",
+                  background: "var(--bg-elevated)",
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  gap: "0.45rem",
+                }}
+              >
+                {/* #n */}
+                <div className="skeleton" style={{ width: 26, height: 10, borderRadius: 6 }} />
 
-          {userRecentMatches && userRecentMatches.length > 0 ? (
-            <div
+                {/* avatar */}
+                <div
+                  className="skeleton"
+                  style={{ width: 60, height: 60, borderRadius: 999 }}
+                />
+
+                {/* nombre */}
+                <div className="skeleton" style={{ width: "70%", height: 12, borderRadius: 6 }} />
+
+                {/* rango */}
+                <div className="skeleton" style={{ width: "55%", height: 10, borderRadius: 6 }} />
+              </div>
+            ))}
+          </div>
+        ) : top3Members.length === 0 ? (            <p
               style={{
-                borderRadius: "1rem",
-                border: "1px solid var(--border)",
-                padding: "0.7rem 0.8rem",
-                background: "var(--bg-elevated)",
-                display: "flex",
-                flexDirection: "column",
-                gap: "0.4rem",
+                margin: "0.3rem 0 0",
+                fontSize: "0.8rem",
+                color: "var(--muted)",
               }}
             >
-              {userRecentMatches.slice(0, 3).map((m, idx) => {
-                const plDelta =
-                  typeof m.plDelta === "number" ? m.plDelta : null;
-                const plText =
-                  plDelta != null
-                    ? `${plDelta > 0 ? "+" : ""}${plDelta} PL`
-                    : null;
-
-                const dateStr =
-                  m.date && !Number.isNaN(Date.parse(m.date))
-                    ? new Date(m.date).toLocaleDateString("es-MX", {
-                        day: "2-digit",
-                        month: "short",
-                      })
-                    : null;
-
-                const title =
-                  m.tournamentName || m.tournament || "Partido rankeado";
-
-                const score =
-                  m.score ||
-                  (typeof m.scoreA === "number" &&
-                    typeof m.scoreB === "number" &&
-                    `${m.scoreA}-${m.scoreB}`) ||
-                  null;
+              Aún no hay ranking disponible.
+            </p>
+          ) : (
+            <div
+              style={{
+                display: "flex",
+                justifyContent:
+                  top3Members.length === 1 ? "center" : "space-between",
+                gap: "0.7rem",
+              }}
+            >
+              {top3Members.map((m, index) => {
+                const isCurrentUser = m.id === userData?.id;
 
                 return (
-                  <div
-                    key={m.id || idx}
+                  <button
+                    key={m.id}
+                    type="button"
+                    onClick={() => handleOpenMemberDetail(m)}
                     style={{
-                      borderRadius: "0.7rem",
-                      border: "1px solid var(--border)",
-                      background: "var(--bg)",
-                      padding: "0.4rem 0.55rem",
+                      flex: 1,
+                      maxWidth: 140,
+                      borderRadius: "1rem",
+                      border: isCurrentUser
+                        ? "2px solid var(--accent)"
+                        : "1px solid var(--border)",
+                      padding: "0.75rem 0.65rem",
+                      background: "var(--bg-elevated)",
+                      cursor: "pointer",
                       display: "flex",
+                      flexDirection: "column",
                       alignItems: "center",
-                      gap: "0.5rem",
+                      gap: "0.35rem",
                     }}
                   >
+                    <span style={{ fontSize: "0.7rem", color: "var(--muted)" }}>
+                      #{index + 1}
+                    </span>
+
                     <div
                       style={{
-                        width: 6,
-                        alignSelf: "stretch",
-                        borderRadius: 999,
-                        background:
-                          plDelta != null && plDelta > 0
-                            ? "rgba(34,197,94,0.9)"
-                            : plDelta != null && plDelta < 0
-                            ? "rgba(239,68,68,0.9)"
-                            : "var(--border)",
-                      }}
-                    />
-                    <div
-                      style={{
-                        flex: 1,
-                        minWidth: 0,
+                        width: 72,
+                        height: 72,
+                        borderRadius: "999px",
+                        overflow: "hidden",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        background: m.profilePicture
+                          ? "var(--bg)"
+                          : "radial-gradient(circle at 30% 20%, #4084d6ff, #174ab8ff)",
                       }}
                     >
-                      <p
+                      {m.profilePicture ? (
+                        <img
+                          src={m.profilePicture}
+                          alt={m.name}
+                          style={{
+                            width: "100%",
+                            height: "100%",
+                            objectFit: "cover",
+                          }}
+                        />
+                      ) : (
+                        <span
+                          style={{
+                            fontSize: "1.5rem",
+                            fontWeight: 700,
+                            color: "#fff",
+                          }}
+                        >
+                          {(m.name || "J")[0].toUpperCase()}
+                        </span>
+                      )}
+                    </div>
+
+                    <div
+                      style={{
+                        textAlign: "center",
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: "0.05rem",
+                      }}
+                    >
+                      <span
                         style={{
-                          margin: 0,
-                          fontSize: "0.8rem",
-                          fontWeight: 600,
+                          fontSize: "0.85rem",
+                          fontWeight: 700,
+                          maxWidth: 130,
                           overflow: "hidden",
                           textOverflow: "ellipsis",
                           whiteSpace: "nowrap",
                         }}
                       >
-                        {title}
-                      </p>
-                      <p
+                        {m.name}
+                      </span>
+                      <span
                         style={{
-                          margin: 0,
-                          fontSize: "0.75rem",
+                          fontSize: "0.74rem",
                           color: "var(--muted)",
                         }}
                       >
-                        {score
-                          ? `Marcador: ${score}`
-                          : "Marcador no disponible"}
-                        {dateStr ? ` · ${dateStr}` : ""}
-                      </p>
-                    </div>
-                    {plText && (
-                      <span
-                        style={{
-                          fontSize: "0.8rem",
-                          fontWeight: 600,
-                          color:
-                            plDelta > 0
-                              ? "rgba(34,197,94,0.95)"
-                              : plDelta < 0
-                              ? "rgba(239,68,68,0.95)"
-                              : "var(--muted)",
-                        }}
-                      >
-                        {plText}
+                        {m.rankLabel}
                       </span>
-                    )}
-                  </div>
+                    </div>
+                  </button>
                 );
               })}
             </div>
-          ) : (
-            <p
-              style={{
-                margin: 0,
-                fontSize: "0.8rem",
-                color: "var(--muted)",
-              }}
-            >
-              Muy pronto verás aquí tus últimos partidos y cambios de PL.
-            </p>
           )}
         </section>
+
+    {/* 4. ACTIVIDAD RECIENTE (HOME) */}
+      <section style={{ marginTop: "0.8rem", marginBottom: "0.8rem" }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: "0.75rem",
+            margin: "0 0 0.4rem",
+          }}
+        >
+          <h3 style={{ margin: 0, fontSize: "0.95rem" }}>Actividad reciente</h3>
+
+          <button
+            onClick={() => navigate("/perfil")}
+            style={{
+              background: "transparent",
+              border: "none",
+              padding: 0,
+              color: "var(--accent)",
+              fontSize: "0.8rem",
+              cursor: "pointer",
+            }}
+          >
+            Ver todos los partidos
+          </button>
+        </div>
+
+      {userRecentMatches && userRecentMatches.length > 0 ? (
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: "0.45rem",
+          }}
+        >
+          {userRecentMatches.slice(0, 5).map((m, idx) => {
+            const plDelta = typeof m.plDelta === "number" ? m.plDelta : null;
+
+            const title = m.tournamentName || m.tournament || "Partido rankeado";
+
+            const score =
+              m.score ||
+              (typeof m.scoreA === "number" &&
+                typeof m.scoreB === "number" &&
+                `${m.scoreA}-${m.scoreB}`) ||
+              null;
+
+            // Detectar empate (por marcador o por PL=0)
+            let isTie = false;
+            if (typeof m.scoreA === "number" && typeof m.scoreB === "number") {
+              isTie = m.scoreA === m.scoreB;
+            } else if (typeof m.score === "string") {
+              const parts = m.score.split("-").map((x) => Number(String(x).trim()));
+              if (parts.length === 2 && !Number.isNaN(parts[0]) && !Number.isNaN(parts[1])) {
+                isTie = parts[0] === parts[1];
+              }
+            } else if (plDelta === 0) {
+              isTie = true;
+            }
+
+            const barColor =
+              plDelta != null && plDelta > 0
+                ? "rgba(34,197,94,0.9)" // verde victoria
+                : plDelta != null && plDelta < 0
+                ? "rgba(239,68,68,0.9)" // rojo derrota
+                : isTie
+                ? "rgba(59,130,246,0.9)" // azul empate
+                : "var(--border)";
+
+            const plText =
+              plDelta != null ? `${plDelta > 0 ? "+" : ""}${plDelta} PL` : null;
+
+            const dateOk = m.date && !Number.isNaN(Date.parse(m.date));
+            const dateStr = dateOk
+              ? new Date(m.date).toLocaleDateString("es-MX", {
+                  day: "2-digit",
+                  month: "short",
+                })
+              : null;
+
+            const timeStr = dateOk
+              ? new Date(m.date).toLocaleString("es-MX", {
+                  day: "2-digit",
+                  month: "short",
+                  hour: "2-digit",
+                  minute: "2-digit",
+                })
+              : null;
+
+            return (
+              <button
+                key={m.id || idx}
+                type="button"
+                onClick={() => {
+                  setSelectedMatch({ ...m, _title: title, _score: score, _timeStr: timeStr });
+                  setShowMatchModal(true);
+                }}
+                style={{
+                  width: "100%",
+                  textAlign: "left",
+                  borderRadius: "0.9rem",
+                  border: "1px solid var(--border)",
+                  background: "var(--bg-elevated)", // ✅ color de card exterior
+                  padding: "0.55rem 0.6rem",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "0.55rem",
+                  cursor: "pointer",
+                }}
+              >
+                <div
+                  style={{
+                    width: 6,
+                    alignSelf: "stretch",
+                    borderRadius: 999,
+                    background: barColor,
+                  }}
+                />
+
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <p
+                    style={{
+                      margin: 0,
+                      fontSize: "0.82rem",
+                      fontWeight: 600,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {title}
+                  </p>
+
+                  <p
+                    style={{
+                      margin: 0,
+                      fontSize: "0.75rem",
+                      color: "var(--muted)",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {score ? `Marcador: ${score}` : "Marcador no disponible"}
+                    {dateStr ? ` · ${dateStr}` : ""}
+                  </p>
+                </div>
+
+                {plText && (
+                  <span
+                    style={{
+                      fontSize: "0.8rem",
+                      fontWeight: 700,
+                      color:
+                        plDelta > 0
+                          ? "rgba(34,197,94,0.95)"
+                          : plDelta < 0
+                          ? "rgba(239,68,68,0.95)"
+                          : isTie
+                          ? "rgba(59,130,246,0.95)"
+                          : "var(--muted)",
+                    }}
+                  >
+                    {plText}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      ) : (
+        <p style={{ margin: 0, fontSize: "0.8rem", color: "var(--muted)" }}>
+          Aún no hay partidos recientes.
+        </p>
+      )}
+    </section>
       </div>
 
       {/* MODAL: RANKING COMPLETO DEL CLUB (solo lista) */}
@@ -1466,6 +1526,7 @@ export default function Home() {
                         margin: 0,
                         fontSize: "0.8rem",
                         fontWeight: 600,
+                        color: "var(--text)",
                         overflow: "hidden",
                         textOverflow: "ellipsis",
                         whiteSpace: "nowrap",
@@ -1777,6 +1838,7 @@ export default function Home() {
                               margin: 0,
                               fontSize: "0.8rem",
                               fontWeight: 600,
+                              color: "var(--text)",
                               overflow: "hidden",
                               textOverflow: "ellipsis",
                               whiteSpace: "nowrap",
@@ -1832,6 +1894,188 @@ export default function Home() {
           </div>
         </div>
       )}
+
+      {showMatchModal && selectedMatch && (
+  <div
+    onClick={() => {
+      setShowMatchModal(false);
+      setSelectedMatch(null);
+    }}
+    style={{
+      position: "fixed",
+      inset: 0,
+      background: "rgba(0,0,0,0.55)",
+      display: "flex",
+      alignItems: "flex-end",
+      justifyContent: "center",
+      padding: "1rem",
+      zIndex: 9999,
+    }}
+  >
+    <div
+      onClick={(e) => e.stopPropagation()}
+      style={{
+        width: "100%",
+        maxWidth: 520,
+        borderRadius: "1.2rem",
+        border: "1px solid var(--border)",
+        background: "var(--bg-elevated)",
+        boxShadow: "0 18px 50px rgba(0,0,0,0.45)",
+        padding: "0.9rem",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "flex-start",
+          justifyContent: "space-between",
+          gap: "0.8rem",
+          marginBottom: "0.6rem",
+        }}
+      >
+        <div style={{ minWidth: 0 }}>
+          <p style={{ margin: 0, fontSize: "0.95rem", fontWeight: 800 }}>
+            {selectedMatch._title || "Partido"}
+          </p>
+          <p style={{ margin: "0.15rem 0 0", fontSize: "0.78rem", color: "var(--muted)" }}>
+            {selectedMatch._timeStr ? `Registrado: ${selectedMatch._timeStr}` : "Hora no disponible"}
+          </p>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => {
+            setShowMatchModal(false);
+            setSelectedMatch(null);
+          }}
+          style={{
+            border: "1px solid var(--border)",
+            background: "var(--bg)",
+            color: "var(--fg)",
+            borderRadius: "999px",
+            padding: "0.35rem 0.6rem",
+            cursor: "pointer",
+            fontSize: "0.78rem",
+          }}
+        >
+          Cerrar
+        </button>
+      </div>
+
+      <div
+        style={{
+          borderRadius: "0.9rem",
+          border: "1px solid var(--border)",
+          background: "var(--bg)",
+          padding: "0.7rem",
+          display: "flex",
+          flexDirection: "column",
+          gap: "0.55rem",
+        }}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", gap: "0.8rem" }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <p style={{ margin: 0, fontSize: "0.72rem", color: "var(--muted)" }}>Marcador</p>
+            <p style={{ margin: "0.1rem 0 0", fontSize: "0.95rem", fontWeight: 800 }}>
+              {selectedMatch._score || "—"}
+            </p>
+          </div>
+
+          <div style={{ flex: 1, minWidth: 0, textAlign: "right" }}>
+            <p style={{ margin: 0, fontSize: "0.72rem", color: "var(--muted)" }}>Cambio (tú)</p>
+            <p style={{ margin: "0.1rem 0 0", fontSize: "0.95rem", fontWeight: 800 }}>
+              {typeof selectedMatch.plDelta === "number"
+                ? `${selectedMatch.plDelta > 0 ? "+" : ""}${selectedMatch.plDelta} PL`
+                : "—"}
+            </p>
+          </div>
+        </div>
+
+        {/* Equipos (si vienen en el objeto) */}
+        {(
+          selectedMatch.team1 ||
+          selectedMatch.team2 ||
+          selectedMatch.equipo1 ||
+          selectedMatch.equipo2 ||
+          selectedMatch.playersTeam1 ||
+          selectedMatch.playersTeam2
+        ) && (
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.6rem" }}>
+            <div>
+              <p style={{ margin: 0, fontSize: "0.72rem", color: "var(--muted)" }}>Equipo 1</p>
+              <p style={{ margin: "0.15rem 0 0", fontSize: "0.85rem", fontWeight: 700 }}>
+                {Array.isArray(selectedMatch.team1)
+                  ? selectedMatch.team1.join(" · ")
+                  : Array.isArray(selectedMatch.equipo1)
+                  ? selectedMatch.equipo1.join(" · ")
+                  : Array.isArray(selectedMatch.playersTeam1)
+                  ? selectedMatch.playersTeam1.join(" · ")
+                  : typeof selectedMatch.team1 === "string"
+                  ? selectedMatch.team1
+                  : "—"}
+              </p>
+            </div>
+
+            <div style={{ textAlign: "right" }}>
+              <p style={{ margin: 0, fontSize: "0.72rem", color: "var(--muted)" }}>Equipo 2</p>
+              <p style={{ margin: "0.15rem 0 0", fontSize: "0.85rem", fontWeight: 700 }}>
+                {Array.isArray(selectedMatch.team2)
+                  ? selectedMatch.team2.join(" · ")
+                  : Array.isArray(selectedMatch.equipo2)
+                  ? selectedMatch.equipo2.join(" · ")
+                  : Array.isArray(selectedMatch.playersTeam2)
+                  ? selectedMatch.playersTeam2.join(" · ")
+                  : typeof selectedMatch.team2 === "string"
+                  ? selectedMatch.team2
+                  : "—"}
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* Cambios por jugador (si existen) */}
+        {selectedMatch.plChanges && typeof selectedMatch.plChanges === "object" && (
+          <div>
+            <p style={{ margin: "0.15rem 0 0.35rem", fontSize: "0.75rem", color: "var(--muted)" }}>
+              Cambios por jugador
+            </p>
+            <div style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
+              {Object.entries(selectedMatch.plChanges).map(([pid, delta]) => (
+                <div
+                  key={pid}
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    fontSize: "0.8rem",
+                  }}
+                >
+                  <span style={{ color: "var(--fg)", opacity: 0.95, overflow: "hidden", textOverflow: "ellipsis" }}>
+                    {pid}
+                  </span>
+                  <span
+                    style={{
+                      fontWeight: 700,
+                      color:
+                        typeof delta === "number" && delta > 0
+                          ? "rgba(34,197,94,0.95)"
+                          : typeof delta === "number" && delta < 0
+                          ? "rgba(239,68,68,0.95)"
+                          : "rgba(59,130,246,0.95)",
+                    }}
+                  >
+                    {typeof delta === "number" ? `${delta > 0 ? "+" : ""}${delta} PL` : "—"}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  </div>
+)}
+
+
     </>
   );
 }
