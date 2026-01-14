@@ -939,7 +939,7 @@ export default function Profile() {
             padding: "1rem",
             border: "1px solid var(--border)",
             background:
-              "radial-gradient(circle at 0% 0%, rgba(59,130,246,0.16), transparent 55%), var(--bg-elevated)",
+              "radial-gradient(circle at 0% 0%, rgba(255, 255, 255, 0.07), transparent 55%), var(--bg-elevated)",
             display: "flex",
             flexDirection: "column",
             gap: "0.9rem",
@@ -1610,11 +1610,11 @@ export default function Profile() {
                           width: "100%",
                           borderRadius: "8px",
                           background:
-                            "linear-gradient(180deg, rgba(56, 191, 248, 1), rgba(59, 131, 246, 0.64))",
+                            "linear-gradient(180deg, rgba(56, 191, 248, 1), rgba(59, 131, 246, 0.29))",
                           height: `${heightPct}%`, // ahora sí porcentaje de esos 40px
                           minHeight: m.value > 0 ? 6 : 3,
                           boxShadow:
-                            "0 0 14px rgba(56, 191, 248, 0.35), 0 8px 14px rgba(15, 23, 42, 0.1)",
+                            "0 0 14px rgba(56, 191, 248, 0.04), 0 8px 14px rgba(0, 0, 0, 0.1)",
                           transition: "height 0.7s ease-out",
                         }}
                       />

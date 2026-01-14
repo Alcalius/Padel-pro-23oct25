@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   addDoc,
   collection,
@@ -10,7 +10,7 @@ import {
 } from "firebase/firestore";
 import { db } from "../firebase/firebase";
 import { useAuth } from "../context/AuthContext";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import Icon from "../components/common/Icon";
 
 const MONTH_NAMES_ES = [
@@ -31,6 +31,8 @@ const MONTH_NAMES_ES = [
 export default function Torneos() {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+
   const userId = user?.uid || null;
 
   const [loading, setLoading] = useState(true);
@@ -183,8 +185,12 @@ if (Array.isArray(clubData.members) && clubData.members.length > 0) {
   // -----------------------------
   // Escuchar torneos del club
   // -----------------------------
-  useEffect(() => {
+useEffect(() => {
     if (!activeClubId) return;
+
+    const params = new URLSearchParams(location.search);
+    const fast = params.get("fast") === "1";
+    if (fast) return; // 👈 modo rápido: no cargar torneos
 
     const q = query(
       collection(db, "tournaments"),
@@ -207,7 +213,7 @@ if (Array.isArray(clubData.members) && clubData.members.length > 0) {
     );
 
     return () => unsub();
-  }, [activeClubId]);
+  }, [activeClubId, location.search]);
 
   const activeTournaments = useMemo(
     () => tournaments.filter((t) => t.status === "active"),
@@ -560,25 +566,18 @@ const generateInitialMatches = (playerIds, desiredMatchCount) => {
               Number(form.matchCount) || 8
             );
 
-      let finalName = form.name.trim();
-      if (!finalName) {
-        const baseName = `Torneo ${
-          activeClub?.name || "Padel"
-        } - ${new Date().toLocaleDateString("es-MX")}`;
+        let finalName = form.name.trim();
 
-        const existingNames = new Set(tournaments.map((t) => t.name));
-        if (!existingNames.has(baseName)) {
-          finalName = baseName;
-        } else {
-          let suffix = 2;
-          let candidate = `${baseName} #${suffix}`;
-          while (existingNames.has(candidate)) {
-            suffix += 1;
-            candidate = `${baseName} #${suffix}`;
-          }
-          finalName = candidate;
+        if (!finalName) {
+          const now = new Date();
+          const date = now.toLocaleDateString("es-MX");
+          const hh = String(now.getHours()).padStart(2, "0");
+          const mm = String(now.getMinutes()).padStart(2, "0");
+          const ss = String(now.getSeconds()).padStart(2, "0");
+
+          // Nombre único por fecha + hora (casi imposible repetir)
+          finalName = `Torneo ${activeClub?.name || "Padel"} - ${date} ${hh}:${mm}:${ss}`;
         }
-      }
 
       const payload = {
         name: finalName,
@@ -652,6 +651,35 @@ const generateInitialMatches = (playerIds, desiredMatchCount) => {
       }));
     }
   }, [totalPlayersForm, form.courts]);
+
+    const hasActiveClub = !!activeClubId;
+
+  // Abrir creación directo si vienes del botón central (?create=1)
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const shouldOpen = params.get("create") === "1";
+
+    if (!shouldOpen) return;
+
+    if (!hasActiveClub) {
+      setErrorMsg("Primero define un club activo en la sección Clubes.");
+      return;
+    }
+
+    resetMessages();
+    setCreateStep(1);
+    setShowInactivePlayers(false);
+    setShowCreate(true);
+
+    params.delete("create");
+    navigate(
+      {
+        pathname: location.pathname,
+        search: params.toString() ? `?${params.toString()}` : "",
+      },
+      { replace: true }
+    );
+  }, [location.search, hasActiveClub, navigate, location.pathname]);
 
 
   // Pequeña recomendación según jugadores
@@ -942,8 +970,6 @@ const generateInitialMatches = (playerIds, desiredMatchCount) => {
       );
     }
 
-  const hasActiveClub = !!activeClubId;
-
   // Nombre "preview" que verás en el modal
   const buildPreviewName = () => {
     if (form.name.trim()) return form.name.trim();
@@ -1144,7 +1170,7 @@ const generateInitialMatches = (playerIds, desiredMatchCount) => {
             top: "3.3rem", // deja libre la top bar
             left: "50%",
             transform: "translateX(-50%)",
-            bottom: "4.9rem", // deja libre la bottom nav
+            bottom: "6.1rem", // deja libre la bottom nav
             width: "100%",
             maxWidth: 480,
             background:
@@ -1497,13 +1523,13 @@ const generateInitialMatches = (playerIds, desiredMatchCount) => {
                           </button>
                         )}
 
-                        <div
-                          style={{
-                            display: "flex",
-                            flexWrap: "wrap",
-                            gap: "0.45rem",
-                          }}
-                        >
+                          <div
+                            style={{
+                              display: "grid",
+                              gridTemplateColumns: "1fr 1fr",
+                              gap: "0.45rem",
+                            }}
+                          >
                           {visibleMembers.map((m) => {
                             const selected = form.players.includes(m.id);
                             return (
@@ -1511,26 +1537,26 @@ const generateInitialMatches = (playerIds, desiredMatchCount) => {
                                 key={m.id}
                                 type="button"
                                 onClick={() => togglePlayer(m.id)}
-                                style={{
-                                  flex: "1 1 calc(50% - 0.3rem)",
-                                  minWidth: 0,
-                                  borderRadius: "0.9rem",
-                                  border: selected
-                                    ? "1px solid var(--accent)"
-                                    : "1px solid var(--border)",
-                                  padding: "0.45rem 0.55rem",
-                                  background: selected
-                                    ? "var(--accent-soft)"
-                                    : "var(--bg-elevated)",
-                                  color: selected
-                                    ? "var(--accent)"
-                                    : "var(--fg)",
-                                  fontSize: "0.78rem",
-                                  display: "flex",
-                                  alignItems: "center",
-                                  gap: "0.4rem",
-                                  cursor: "pointer",
-                                }}
+                                  style={{
+                                    width: "100%",
+                                    minWidth: 0,
+                                    borderRadius: "0.9rem",
+                                    border: selected ? "1px solid var(--accent)" : "1px solid var(--border)",
+                                    padding: "0.45rem 0.55rem",
+
+                                    // 👇 mejora contraste en oscuro (más separación del fondo)
+                                    background: selected ? "var(--accent-soft)" : "var(--bg)",
+                                    color: selected ? "var(--accent)" : "var(--fg)",
+
+                                    fontSize: "0.78rem",
+                                    display: "flex",
+                                    alignItems: "center",
+                                    gap: "0.4rem",
+                                    cursor: "pointer",
+
+                                    // 👇 leve relieve para que no se “pierda” en oscuro
+                                    boxShadow: selected ? "none" : "0 1px 0 rgba(255,255,255,0.06)",
+                                  }}
                               >
                                 <div
                                   style={{
@@ -1752,67 +1778,108 @@ const generateInitialMatches = (playerIds, desiredMatchCount) => {
                       }}
                     />
 
-                    <div
-                      style={{
-                        marginTop: "0.45rem",
-                        display: "flex",
-                        flexDirection: "column",
-                        gap: "0.3rem",
-                        padding: "0.5rem 0.55rem",
-                        borderRadius: "0.8rem",
-                        border: "1px solid var(--border)",
-                        background: "var(--bg)",
-                      }}
-                    >
-                      <div
-                        style={{
-                          display: "flex",
-                          justifyContent: "space-between",
-                          alignItems: "center",
-                          fontSize: "0.78rem",
-                        }}
-                      >
-                        <span style={{ fontWeight: 600 }}>
-                          {form.matchCount} partidos totales
-                        </span>
-                        <span
-                          style={{
-                            fontSize: "0.72rem",
-                            color: "var(--muted)",
-                          }}
-                        >
-                          ~{approxMatchesPerPlayer} partidos por jugador
-                        </span>
-                      </div>
+<div
+  style={{
+    marginTop: "0.35rem",
+    borderRadius: "0.9rem",
+    border: "1px solid var(--border)",
+    background: "var(--bg)",
+    padding: "0.75rem 0.7rem",
+    display: "flex",
+    flexDirection: "column",
+    gap: "0.55rem",
+  }}
+>
+  {/* Número grande */}
+  <div
+    style={{
+      display: "flex",
+      alignItems: "baseline",
+      justifyContent: "space-between",
+      gap: "0.6rem",
+    }}
+  >
+    <div>
+      <div
+        style={{
+          fontSize: "0.72rem",
+          color: "var(--muted)",
+          fontWeight: 600,
+          letterSpacing: "0.02em",
+        }}
+      >
+        Partidos totales
+      </div>
+      <div
+        style={{
+          fontSize: "1.55rem",
+          fontWeight: 800,
+          lineHeight: 1.05,
+        }}
+      >
+        {form.matchCount}
+      </div>
+    </div>
 
-                      <div
-                        style={{
-                          display: "flex",
-                          justifyContent: "space-between",
-                          fontSize: "0.72rem",
-                          color: "var(--muted)",
-                        }}
-                      >
-                        <span>Jugadores seleccionados:</span>
-                        <span style={{ fontWeight: 500 }}>
-                          {totalPlayersForm} jugador
-                          {totalPlayersForm === 1 ? "" : "es"}
-                        </span>
-                      </div>
+    <div style={{ textAlign: "right" }}>
+      <div
+        style={{
+          fontSize: "0.72rem",
+          color: "var(--muted)",
+          fontWeight: 600,
+        }}
+      >
+        Por jugador
+      </div>
+      <div style={{ fontSize: "1.05rem", fontWeight: 800 }}>
+        ~{approxMatchesPerPlayer}
+      </div>
+    </div>
+  </div>
 
-                      {matchesRecommendation && (
-                        <p
-                          style={{
-                            margin: 0,
-                            marginTop: "0.1rem",
-                            fontSize: "0.7rem",
-                            color: "var(--muted)",
-                          }}
-                        >
-                          {matchesRecommendation}
-                        </p>
-                      )}
-                    </div>
+  {/* Hint claro de “mueve para sumar/restar” */}
+  <div
+    style={{
+      display: "flex",
+      justifyContent: "space-between",
+      alignItems: "center",
+      gap: "0.5rem",
+      fontSize: "0.78rem",
+      color: "var(--muted)",
+    }}
+  >
+    <span>Arrastra la barra para agregar o quitar partidos</span>
+    <span style={{ fontWeight: 700, color: "var(--fg)" }}>− / +</span>
+  </div>
+
+  {/* Info compacta */}
+  <div
+    style={{
+      display: "flex",
+      justifyContent: "space-between",
+      fontSize: "0.78rem",
+      color: "var(--muted)",
+    }}
+  >
+    <span>Jugadores seleccionados</span>
+    <span style={{ fontWeight: 700, color: "var(--fg)" }}>
+      {totalPlayersForm}
+    </span>
+  </div>
+
+  {matchesRecommendation && (
+    <div
+      style={{
+        fontSize: "0.72rem",
+        color: "var(--muted)",
+        borderTop: "1px dashed var(--border)",
+        paddingTop: "0.45rem",
+      }}
+    >
+      {matchesRecommendation}
+    </div>
+  )}
+</div>
                   </div>
 
                   {/* Canchas */}

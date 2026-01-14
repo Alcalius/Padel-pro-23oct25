@@ -976,235 +976,176 @@ export default function Home() {
           </div>
         </section>
 
-        {/* 3. TOP RANKING DEL CLUB */}
-        <section>
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              marginBottom: "0.4rem",
-            }}
-          >
-            <h3
-              style={{
-                margin: 0,
-                fontSize: "0.95rem",
-              }}
-            >
-              Top ranking del club
-            </h3>
-            <button
-              type="button"
-              onClick={() => setShowRankingModal(true)}
-              style={{
-                marginLeft: "auto",
-                borderRadius: "999px",
-                border: "1px solid var(--border)",
-                padding: "0.2rem 0.5rem",
-                fontSize: "0.75rem",
-                background: "transparent",
-                cursor: "pointer",
-              }}
-            >
-              Ver ranking completo
-            </button>
-          </div>
+{/* 3. TOP RANKING DEL CLUB */}
+<section style={{ marginTop: "0.9rem" }}>
+  <div
+    style={{
+      display: "flex",
+      justifyContent: "space-between",
+      alignItems: "center",
+      marginBottom: "0.5rem",
+    }}
+  >
+    <h3 style={{ margin: 0, fontSize: "0.95rem", fontWeight: 700 }}>
+      Top ranking del club
+    </h3>
 
-          <div
+    <button
+      onClick={() => navigate("/ranking")}
+      style={{
+        background: "transparent",
+        border: "none",
+        color: "var(--accent)",
+        fontSize: "0.75rem",
+        fontWeight: 600,
+        cursor: "pointer",
+      }}
+    >
+      Ver ranking completo
+    </button>
+  </div>
+
+  {rankingLoading ? (
+    <div
+      style={{
+        display: "flex",
+        justifyContent: "space-between",
+        gap: "0.7rem",
+      }}
+    >
+      {Array.from({ length: 3 }).map((_, idx) => (
+        <div
+          key={idx}
+          style={{
+            flex: 1,
+            maxWidth: 140,
+            borderRadius: "1rem",
+            border: "1px solid var(--border)",
+            padding: "0.7rem 0.6rem",
+            background: "var(--bg-elevated)",
+          }}
+        />
+      ))}
+    </div>
+  ) : top3Members.length === 0 ? (
+    <p
+      style={{
+        margin: "0.3rem 0 0",
+        fontSize: "0.8rem",
+        color: "var(--muted)",
+      }}
+    >
+      Aún no hay ranking disponible.
+    </p>
+  ) : (
+    <div
+      style={{
+        display: "flex",
+        justifyContent:
+          top3Members.length === 1 ? "center" : "space-between",
+        gap: "0.7rem",
+      }}
+    >
+      {top3Members.map((m, index) => {
+        const isCurrentUser = m.id === userData?.id;
+
+        return (
+          <button
+            key={m.id}
+            type="button"
+            onClick={() => handleOpenMemberDetail(m)}
             style={{
+              flex: 1,
+              maxWidth: 140,
               borderRadius: "1rem",
-              border: "1px solid var(--border)",
-              padding: "0.8rem 0.8rem",
+              border: isCurrentUser
+                ? "2px solid var(--accent)"
+                : "1px solid var(--border)",
+              padding: "0.75rem 0.65rem",
               background: "var(--bg-elevated)",
+              cursor: "pointer",
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              gap: "0.35rem",
             }}
           >
-          {rankingLoading ? (
-            // Skeletons mientras carga el ranking
+            <span style={{ fontSize: "0.7rem", color: "var(--muted)" }}>
+              #{index + 1}
+            </span>
+
             <div
               style={{
+                width: 72,
+                height: 72,
+                borderRadius: "999px",
+                overflow: "hidden",
                 display: "flex",
-                justifyContent: "space-around",
-                gap: "0.6rem",
+                alignItems: "center",
+                justifyContent: "center",
+                background: m.profilePicture
+                  ? "var(--bg)"
+                  : "radial-gradient(circle at 30% 20%, #4084d6ff, #174ab8ff)",
               }}
             >
-              {Array.from({ length: 3 }).map((_, idx) => (
-                <div
-                  key={idx}
+              {m.profilePicture ? (
+                <img
+                  src={m.profilePicture}
+                  alt={m.name}
                   style={{
-                    flex: 1,
-                    maxWidth: 120,
-                    borderRadius: "0.9rem",
-                    border: "1px solid var(--border)",
-                    padding: "0.6rem 0.5rem",
-                    background: "var(--bg-elevated)",
-                    display: "flex",
-                    flexDirection: "column",
-                    alignItems: "center",
-                    gap: "0.35rem",
+                    width: "100%",
+                    height: "100%",
+                    objectFit: "cover",
+                  }}
+                />
+              ) : (
+                <span
+                  style={{
+                    fontSize: "1.5rem",
+                    fontWeight: 700,
+                    color: "#fff",
                   }}
                 >
-                  <div
-                    style={{
-                      width: 60,
-                      height: 60,
-                      borderRadius: "999px",
-                      background: "var(--bg)",
-                    }}
-                  />
-                  <div
-                    style={{
-                      width: "60%",
-                      height: 10,
-                      borderRadius: 999,
-                      background: "var(--bg)",
-                    }}
-                  />
-                  <div
-                    style={{
-                      width: "50%",
-                      height: 8,
-                      borderRadius: 999,
-                      background: "var(--bg)",
-                    }}
-                  />
-                </div>
-              ))}
+                  {(m.name || "J")[0].toUpperCase()}
+                </span>
+              )}
             </div>
-          ) : top3Members.length === 0 ? (
-            <p
-              style={{
-                margin: "0.3rem 0 0",
-                fontSize: "0.8rem",
-                color: "var(--muted)",
-              }}
-            >
-              Aún no hay ranking disponible. Juega torneos para generar el top.
-            </p>
-          ) : (
+
             <div
               style={{
+                textAlign: "center",
                 display: "flex",
-                justifyContent:
-                  top3Members.length === 1 ? "center" : "space-between",
-                gap: "0.6rem",
+                flexDirection: "column",
+                gap: "0.05rem",
               }}
             >
-              {top3Members.map((m, index) => {
-                const isCurrentUser = m.id === userData?.id;
-                const popScale = animateTop3 ? (index === 0 ? 1.05 : 1.0) : 1.0;
-
-                return (
-                  <button
-                    key={m.id}
-                    type="button"
-                    onClick={() => handleOpenMemberDetail(m)}
-                    style={{
-                      flex: 1,
-                      maxWidth: 120,
-                      borderRadius: "0.9rem",
-                      border: isCurrentUser
-                        ? "2px solid var(--accent)"
-                        : "1px solid var(--border)",
-                      padding: "0.6rem 0.5rem",
-                      background: "var(--bg-elevated)",
-                      cursor: "pointer",
-                      display: "flex",
-                      flexDirection: "column",
-                      alignItems: "center",
-                      gap: "0.3rem",
-                      transform: `scale(${popScale})`,
-                      transition:
-                        "transform 220ms ease-out, box-shadow 220ms ease-out",
-                      boxShadow: animateTop3
-                        ? "0 14px 30px rgba(15,23,42,0.35)"
-                        : "none",
-                    }}
-                  >
-                    <span
-                      style={{
-                        fontSize: "0.7rem",
-                        color: "var(--muted)",
-                      }}
-                    >
-                      #{index + 1}
-                    </span>
-
-                    <div
-                      style={{
-                        width: 60,
-                        height: 60,
-                        borderRadius: "999px",
-                        overflow: "hidden",
-                        border: isCurrentUser
-                          ? "2px solid var(--accent)"
-                          : "1px solid transparent",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        background: m.profilePicture
-                          ? "var(--bg-elevated)"
-                          : "radial-gradient(circle at 30% 20%, #4084d6ff, #174ab8ff)",
-                      }}
-                    >
-                      {m.profilePicture ? (
-                        <img
-                          src={m.profilePicture}
-                          alt={m.name}
-                          style={{
-                            width: "100%",
-                            height: "100%",
-                            objectFit: "cover",
-                          }}
-                        />
-                      ) : (
-                        <span
-                          style={{
-                            fontSize: "1.4rem",
-                            fontWeight: 700,
-                            color: "#ffffff",
-                          }}
-                        >
-                          {(m.name || "J")[0].toUpperCase()}
-                        </span>
-                      )}
-                    </div>
-
-                    <div
-                      style={{
-                        display: "flex",
-                        flexDirection: "column",
-                        alignItems: "center",
-                        gap: "0.05rem",
-                      }}
-                    >
-                      <span
-                        style={{
-                          fontSize: "0.8rem",
-                          fontWeight: 600,
-                          maxWidth: 110,
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          whiteSpace: "nowrap",
-                        }}
-                      >
-                        {m.name}
-                      </span>
-                      <span
-                        style={{
-                          fontSize: "0.72rem",
-                          color: "var(--muted)",
-                        }}
-                      >
-                        {m.rankLabel}
-                      </span>
-                    </div>
-                  </button>
-                );
-              })}
+              <span
+                style={{
+                  fontSize: "0.85rem",
+                  fontWeight: 700,
+                  maxWidth: 130,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {m.name}
+              </span>
+              <span
+                style={{
+                  fontSize: "0.74rem",
+                  color: "var(--muted)",
+                }}
+              >
+                {m.rankLabel}
+              </span>
             </div>
-          )}
-          </div>
-        </section>
+          </button>
+        );
+      })}
+    </div>
+  )}
+</section>
 
         {/* 4. ACTIVIDAD RECIENTE (HOME) */}
         <section style={{ marginTop: "0.8rem", marginBottom: "0.8rem" }}>

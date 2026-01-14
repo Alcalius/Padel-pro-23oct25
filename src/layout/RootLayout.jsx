@@ -100,6 +100,23 @@ export default function RootLayout() {
     navigate(path);
   };
 
+  const BottomItem = ({ icon, active, onClick, ariaLabel }) => {
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        className={`bottom-item ${active ? "active" : ""}`}
+        aria-label={ariaLabel || icon}
+        title={ariaLabel || icon}
+      >
+        <div className="bottom-item-iconWrap">
+        <Icon name={icon} size={28} color="currentColor" />
+        </div>
+      </button>
+    );
+  };
+
+
   return (
     <div
       style={{
@@ -203,7 +220,7 @@ export default function RootLayout() {
                 whiteSpace: "nowrap",
               }}
             >
-              V 0.6.0
+              V 0.7.1
             </span>
 
             {/* Tema */}
@@ -252,7 +269,7 @@ export default function RootLayout() {
         <Outlet />
       </main>
 
-      {/* BOTTOM NAV fija */}
+      {/* BOTTOM NAV iOS-like con botón central */}
       {!hideBottomNav && user && (
         <nav
           style={{
@@ -262,72 +279,144 @@ export default function RootLayout() {
             bottom: 0,
             width: "100%",
             maxWidth: 480,
-            borderTop: "1px solid var(--border)",
-            background: "var(--bg-elevated)",
-            // ⬇️ Un poco más de espacio abajo para no chocar con la barra del iPhone
-            padding: "0.3rem 0.4rem calc(0.6rem + env(safe-area-inset-bottom))",
+            padding: "0.55rem 0.9rem calc(1.2rem + env(safe-area-inset-bottom))",
             zIndex: 40,
+            pointerEvents: "none", // importante: para que solo los botones reciban click
           }}
         >
-          <div
-            style={{
-              display: "flex",
-              alignItems: "stretch",
-              justifyContent: "space-between",
-              gap: "0.25rem",
-            }}
-          >
-            {navItems.map((item) => {
-              const active = isActive(item.path);
-              return (
-                <button
-                  key={item.key}
-                  type="button"
-                  onClick={() => handleNavClick(item.path)}
-                  style={{
-                    flex: 1,
-                    border: "none",
-                    background: "transparent",
-                    padding: "0.2rem 0.2rem 0.4rem",
-                    display: "flex",
-                    flexDirection: "column",
-                    alignItems: "center",
-                    gap: "0.1rem",
-                    cursor: "pointer",
-                  }}
-                >
-                  <div
-                    style={{
-                      // ⬇️ Iconos un poco más grandes
-                      width: 32,
-                      height: 38,
-                      borderRadius: "0.8rem",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      background: active ? "var(--accent-soft)" : "transparent",
-                    }}
-                  >
-                    <Icon
-                      name={item.icon}
-                      size={20}
-                      color={active ? "var(--accent)" : "var(--muted)"}
-                    />
-                  </div>
-                  <span
-                    style={{
-                      fontSize: "0.7rem",
-                      marginTop: "0.05rem",
-                      color: active ? "var(--accent)" : "var(--muted)",
-                      fontWeight: active ? 600 : 500,
-                    }}
-                  >
-                    {item.label}
-                  </span>
-                </button>
-              );
-            })}
+            <div
+              style={{
+                pointerEvents: "auto",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: "0.9rem",
+                padding: "0.55rem 0.6rem",
+                borderRadius: 999,
+                background: "var(--bg-elevated)",
+                border: "1px solid var(--hairline)",
+                backdropFilter: "blur(var(--blur))",
+                WebkitBackdropFilter: "blur(var(--blur))",
+              }}
+            >
+            {/* HOME */}
+            <BottomItem
+              icon="home"
+              ariaLabel="Home"
+              active={isActive("/")}
+              onClick={() => handleNavClick("/")}
+            />
+
+            {/* TORNEOS */}
+            <BottomItem
+              icon="tournament"
+              ariaLabel="Torneos"
+              active={isActive("/torneos")}
+              onClick={() => handleNavClick("/torneos")}
+            />
+
+            {/* ESPACIO extra antes del botón central */}
+            <div style={{ width: 1 }} />
+
+            {/* BOTÓN CENTRAL */}
+            <button
+              type="button"
+              onClick={() => navigate("/torneos?create=1&fast=1")}
+              title="Crear torneo"
+              style={{
+                width: 56,
+                height: 56,
+                borderRadius: 999,
+                border: "none",
+                background: "var(--accent)",
+                boxShadow: "0 12px 30px rgba(0,0,0,0.45)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                transform: "translateY(-1px)",
+                cursor: "pointer",
+                flexShrink: 0,
+              }}
+            >
+              <Icon name="add" size={28} color="#fff" />
+            </button>
+
+            {/* ESPACIO extra después del botón central */}
+            <div style={{ width: 1 }} />
+
+            {/* CLUBES */}
+            <BottomItem
+              icon="club"
+              ariaLabel="Clubes"
+              active={isActive("/clubes")}
+              onClick={() => handleNavClick("/clubes")}
+            />
+
+            {/* PERFIL */}
+            <BottomItem
+              icon="profile"
+              ariaLabel="Perfil"
+              active={isActive("/perfil")}
+              onClick={() => handleNavClick("/perfil")}
+            />
           </div>
+
+          {/* Componente inline para cada tab */}
+            <style>{`
+              .bottom-item {
+                flex: 0 0 64px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                padding: 0.15rem;
+                border: none;
+                background: transparent;
+                cursor: pointer;
+                border-radius: 999px;
+
+                /* Color base para currentColor */
+                color: var(--muted);
+              }
+
+              /* Activo: solo cambia el color (stroke) */
+              .bottom-item.active {
+                color: var(--accent);
+              }
+
+              .bottom-item-iconWrap {
+                width: 44px;
+                height: 44px;
+                border-radius: 999px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                background: transparent;
+                transition: transform 0.12s ease;
+              }
+
+              /* Forzar “solo stroke”: nada de relleno */
+              .bottom-item svg,
+              .bottom-item svg * {
+                fill: none !important;
+                stroke: currentColor !important;
+              }
+
+              /* Pop animation al activarse */
+              .bottom-item.active .bottom-item-iconWrap {
+                animation: navPop 160ms ease-out;
+              }
+
+              @keyframes navPop {
+                0%   { transform: scale(0.92); }
+                60%  { transform: scale(1.08); }
+                100% { transform: scale(1.00); }
+              }
+
+              /* Feedback al presionar */
+              .bottom-item:active .bottom-item-iconWrap {
+                transform: scale(0.97);
+              }
+            `}</style>
         </nav>
       )}
     </div>

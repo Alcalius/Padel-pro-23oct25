@@ -22,7 +22,7 @@
   max-width: 480px;
   width: 100%;
   margin: 0 auto;
-  padding: 0.9rem 1rem 0.8rem;
+  padding: calc(0.65rem + var(--safe-top)) 1rem 0.75rem;
 
   display: flex;
   align-items: center;
@@ -30,15 +30,16 @@
   gap: 0.75rem;
 
   background-color: var(--bg-elevated);
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--hairline);
 
-  /* ligera sombra para separar del contenido en scroll */
-  box-shadow: 0 6px 12px rgba(0, 0, 0, 0.18);
+  backdrop-filter: blur(var(--blur));
+  -webkit-backdrop-filter: blur(var(--blur));
+
+  box-shadow: none;
 
   transition:
     background-color 0.25s ease,
-    border-color 0.25s ease,
-    box-shadow 0.25s ease;
+    border-color 0.25s ease;
 }
 
 .app-title {
@@ -113,22 +114,36 @@
 
 /* Tarjetas reutilizables */
 .card {
-  background-color: var(--bg-elevated);
-  border-radius: 1.25rem;
-  border: 1px solid var(--border);
-  padding: 1.25rem;
+  background-color: var(--card);
+  border-radius: var(--radius-xl);
 
-  box-shadow: 0 18px 30px rgba(0, 0, 0, 0.22);
+  /* sin marcos */
+  border: none;
+
+  padding: 1.15rem;
+
+  /* sombra sutil (iOS) */
+  box-shadow: var(--shadow-1);
+
+  backdrop-filter: blur(var(--blur));
+  -webkit-backdrop-filter: blur(var(--blur));
+
   transition:
     background-color 0.25s ease,
-    border-color 0.25s ease,
     box-shadow 0.25s ease,
     transform 0.12s ease;
 }
 
+/* En caso de navegadores sin blur, cae a sólido */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .card {
+    background-color: var(--card-solid);
+  }
+}
+
 .card:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 22px 40px rgba(0, 0, 0, 0.28);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-2);
 }
 
 .card-title {
@@ -156,41 +171,20 @@
   justify-content: space-around;
 
   background-color: var(--bg-elevated);
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--hairline);
 
-  padding: 0.6rem 0 0.85rem;
-  height: 70px; /* barra tipo app móvil */
+  backdrop-filter: blur(var(--blur));
+  -webkit-backdrop-filter: blur(var(--blur));
 
-  /* sombra suave hacia arriba */
-  box-shadow: 0 -8px 20px rgba(0, 0, 0, 0.35);
+  padding: 0.55rem 0 calc(0.75rem + var(--safe-bottom));
+  height: auto;
+
+  box-shadow: none;
 
   transition:
     background-color 0.25s ease,
-    border-color 0.25s ease,
-    box-shadow 0.25s ease;
+    border-color 0.25s ease;
 }
-
-/* Tema claro: barra clara */
-[data-theme="light"] .bottom-nav {
-  background-color: #ffffff;
-  box-shadow: 0 -4px 18px rgba(15, 23, 42, 0.12);
-}
-[data-theme="light"] {
-  --hero-icon-bg: #dbdbdb; /* gris muy suave */
-  --hero-icon-shadow: 0 4px 12px rgba(0, 0, 0, 0.199); 
-  --hero-icon-color: #1f2937; /* gris oscuro */
-
-  --shadow-elevated: 0 8px 24px rgba(0,0,0,0.05);
-}
-[data-theme="dark"] {
-  --hero-icon-bg: radial-gradient(circle at 30% 20%, #ffffff33, #0f172a33);
-  --hero-icon-shadow: 0 16px 40px rgba(15,23,42,0.9);
-  --hero-icon-color: #ffffff;
-
-  --shadow-elevated: 0 22px 50px rgba(15,23,42,0.9);
-}
-
-
 
 /* Item del menú inferior */
 .bottom-nav-item {
@@ -216,8 +210,9 @@
     transform 0.1s ease;
 }
 
-.bottom-nav-item:active {
-  transform: scale(0.95);
+.bottom-nav-item-active {
+  color: var(--accent);
+  font-weight: 600;
 }
 
 .bottom-nav-item-active {
@@ -237,7 +232,7 @@
 
 /* Icono del tab activo: leve “salto” */
 .bottom-nav-item-active .bottom-nav-icon {
-  transform: translateY(-2px) scale(1.1);
+  transform: translateY(-1px) scale(1.06);
 }
 
 /* Etiqueta */
