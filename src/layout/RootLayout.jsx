@@ -220,7 +220,7 @@ export default function RootLayout() {
                 whiteSpace: "nowrap",
               }}
             >
-              V 0.7.2
+              V 0.7.3
             </span>
 
             {/* Tema */}

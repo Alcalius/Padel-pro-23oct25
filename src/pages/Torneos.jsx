@@ -311,13 +311,14 @@ useEffect(() => {
     setShowPreview(false);
   };
 
-  // -----------------------------
-  // Generación de partidos con aleatoriedad
-  // -----------------------------
-const generateInitialMatches = (playerIds, desiredMatchCount) => {
+// -----------------------------
+// Generación de partidos con aleatoriedad (sin solapar jugadores entre canchas)
+// -----------------------------
+const generateInitialMatches = (playerIds, desiredMatchCount, courts = 1) => {
   if (!Array.isArray(playerIds) || playerIds.length < 4) return [];
 
   const matchCount = Math.max(1, desiredMatchCount || 1);
+  const courtsCount = Math.max(1, Number(courts) || 1);
 
   // Mezcla base para que cada "recalcular" tenga orden diferente
   const players = [...playerIds].sort(() => Math.random() - 0.5);
@@ -395,7 +396,16 @@ const generateInitialMatches = (playerIds, desiredMatchCount) => {
 
   const matches = [];
 
+  // 👇 NUEVO: evita que en las "mismas canchas al mismo tiempo" se repitan jugadores
+  // Ej. courts=2 => partidos 0 y 1 no comparten jugadores, 2 y 3 tampoco, etc.
+  let roundUsedPlayers = new Set();
+
   for (let matchIndex = 0; matchIndex < matchCount; matchIndex++) {
+    // cada "ronda" empieza cuando matchIndex % courtsCount === 0
+    if (matchIndex % courtsCount === 0) {
+      roundUsedPlayers = new Set();
+    }
+
     // Ordenamos por partidos jugados (fairness muy fuerte aquí)
     const sortedByMatches = [...players].sort((a, b) => {
       const ma = stats[a].matches;
@@ -404,8 +414,9 @@ const generateInitialMatches = (playerIds, desiredMatchCount) => {
       return 0; // dejamos el orden aleatorio inicial para romper empates
     });
 
-    // Pool de candidatos: los que menos partidos llevan (hasta 8)
-    const poolSize = Math.min(sortedByMatches.length, 8);
+    // Pool de candidatos: subimos el pool para que, con 2 canchas, haya margen
+    // y podamos encontrar 4 jugadores que NO choquen con roundUsedPlayers.
+    const poolSize = Math.min(sortedByMatches.length, Math.max(12, courtsCount * 6));
     const pool = sortedByMatches.slice(0, poolSize);
 
     if (pool.length < 4) break;
@@ -420,13 +431,14 @@ const generateInitialMatches = (playerIds, desiredMatchCount) => {
           for (let l = k + 1; l < pool.length; l++) {
             const group = [pool[i], pool[j], pool[k], pool[l]];
 
+            // 👇 CLAVE: si alguno ya está usado en esta ronda, lo descartamos
+            if (group.some((pid) => roundUsedPlayers.has(pid))) continue;
+
             const fairness = fairnessCostForGroup(group);
 
-            // Evitamos, en lo posible, combinaciones que creen diferencia > 1
-            // (pero si no hay otra opción, las permitimos)
             const fairnessWeight = 10; // peso fuerte para fairness
 
-            // Ahora miramos cómo formar los equipos dentro de este grupo
+            // cómo formar equipos dentro de este grupo
             const [a, b, c, d] = group;
             const options = [
               { team1: [a, b], team2: [c, d] },
@@ -435,10 +447,7 @@ const generateInitialMatches = (playerIds, desiredMatchCount) => {
             ];
 
             let bestForGroup = options[0];
-            let bestRepCost = repetitionCost(
-              options[0].team1,
-              options[0].team2
-            );
+            let bestRepCost = repetitionCost(options[0].team1, options[0].team2);
 
             for (let optIdx = 1; optIdx < options.length; optIdx++) {
               const opt = options[optIdx];
@@ -453,9 +462,7 @@ const generateInitialMatches = (playerIds, desiredMatchCount) => {
 
             if (
               totalCost < bestTotalCost ||
-              // Si el fairness es mejor, preferimos ese incluso con coste similar
-              (fairness < (bestChoice?.fairness ?? Infinity) &&
-                fairness <= 1)
+              (fairness < (bestChoice?.fairness ?? Infinity) && fairness <= 1)
             ) {
               bestTotalCost = totalCost;
               bestChoice = {
@@ -469,6 +476,7 @@ const generateInitialMatches = (playerIds, desiredMatchCount) => {
       }
     }
 
+    // Si no encontramos por la restricción, ya no generamos más para no crear partidos imposibles.
     if (!bestChoice) break;
 
     const matchId = `match-${Date.now()}-${matchIndex}-${Math.random()
@@ -485,8 +493,9 @@ const generateInitialMatches = (playerIds, desiredMatchCount) => {
       createdAt: new Date().toISOString(),
     });
 
-    // Actualizamos stats y contadores de compañeros/rivales
+    // Marcar jugadores usados en esta ronda
     [...bestChoice.team1, ...bestChoice.team2].forEach((pid) => {
+      roundUsedPlayers.add(pid);
       stats[pid].matches += 1;
     });
 
@@ -515,7 +524,8 @@ const generateInitialMatches = (playerIds, desiredMatchCount) => {
     const allPlayerIds = getAllPlayerIds();
     const matches = generateInitialMatches(
       allPlayerIds,
-      Number(form.matchCount) || 8
+      Number(form.matchCount) || 8,
+      form.courts
     );
 
     if (!matches || matches.length === 0) {
@@ -561,10 +571,11 @@ const generateInitialMatches = (playerIds, desiredMatchCount) => {
       const matches =
         showPreview && previewMatches.length > 0
           ? previewMatches
-          : generateInitialMatches(
-              allPlayerIds,
-              Number(form.matchCount) || 8
-            );
+        : generateInitialMatches(
+            allPlayerIds,
+            Number(form.matchCount) || 8,
+            form.courts
+          );
 
         let finalName = form.name.trim();
 
@@ -1778,108 +1789,108 @@ const generateInitialMatches = (playerIds, desiredMatchCount) => {
                       }}
                     />
 
-<div
-  style={{
-    marginTop: "0.35rem",
-    borderRadius: "0.9rem",
-    border: "1px solid var(--border)",
-    background: "var(--bg)",
-    padding: "0.75rem 0.7rem",
-    display: "flex",
-    flexDirection: "column",
-    gap: "0.55rem",
-  }}
->
-  {/* Número grande */}
-  <div
-    style={{
-      display: "flex",
-      alignItems: "baseline",
-      justifyContent: "space-between",
-      gap: "0.6rem",
-    }}
-  >
-    <div>
-      <div
-        style={{
-          fontSize: "0.72rem",
-          color: "var(--muted)",
-          fontWeight: 600,
-          letterSpacing: "0.02em",
-        }}
-      >
-        Partidos totales
-      </div>
-      <div
-        style={{
-          fontSize: "1.55rem",
-          fontWeight: 800,
-          lineHeight: 1.05,
-        }}
-      >
-        {form.matchCount}
-      </div>
-    </div>
+                    <div
+                      style={{
+                        marginTop: "0.35rem",
+                        borderRadius: "0.9rem",
+                        border: "1px solid var(--border)",
+                        background: "var(--bg)",
+                        padding: "0.75rem 0.7rem",
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: "0.55rem",
+                      }}
+                    >
+                      {/* Número grande */}
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "baseline",
+                          justifyContent: "space-between",
+                          gap: "0.6rem",
+                        }}
+                      >
+                        <div>
+                          <div
+                            style={{
+                              fontSize: "0.72rem",
+                              color: "var(--muted)",
+                              fontWeight: 600,
+                              letterSpacing: "0.02em",
+                            }}
+                          >
+                            Partidos totales
+                          </div>
+                          <div
+                            style={{
+                              fontSize: "1.55rem",
+                              fontWeight: 800,
+                              lineHeight: 1.05,
+                            }}
+                          >
+                            {form.matchCount}
+                          </div>
+                        </div>
 
-    <div style={{ textAlign: "right" }}>
-      <div
-        style={{
-          fontSize: "0.72rem",
-          color: "var(--muted)",
-          fontWeight: 600,
-        }}
-      >
-        Por jugador
-      </div>
-      <div style={{ fontSize: "1.05rem", fontWeight: 800 }}>
-        ~{approxMatchesPerPlayer}
-      </div>
-    </div>
-  </div>
+                        <div style={{ textAlign: "right" }}>
+                          <div
+                            style={{
+                              fontSize: "0.72rem",
+                              color: "var(--muted)",
+                              fontWeight: 600,
+                            }}
+                          >
+                            Por jugador
+                          </div>
+                          <div style={{ fontSize: "1.05rem", fontWeight: 800 }}>
+                            ~{approxMatchesPerPlayer}
+                          </div>
+                        </div>
+                      </div>
 
-  {/* Hint claro de “mueve para sumar/restar” */}
-  <div
-    style={{
-      display: "flex",
-      justifyContent: "space-between",
-      alignItems: "center",
-      gap: "0.5rem",
-      fontSize: "0.78rem",
-      color: "var(--muted)",
-    }}
-  >
-    <span>Arrastra la barra para agregar o quitar partidos</span>
-    <span style={{ fontWeight: 700, color: "var(--fg)" }}>− / +</span>
-  </div>
+                      {/* Hint claro de “mueve para sumar/restar” */}
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "center",
+                          gap: "0.5rem",
+                          fontSize: "0.78rem",
+                          color: "var(--muted)",
+                        }}
+                      >
+                        <span>Arrastra la barra para agregar o quitar partidos</span>
+                        <span style={{ fontWeight: 700, color: "var(--fg)" }}>− / +</span>
+                      </div>
 
-  {/* Info compacta */}
-  <div
-    style={{
-      display: "flex",
-      justifyContent: "space-between",
-      fontSize: "0.78rem",
-      color: "var(--muted)",
-    }}
-  >
-    <span>Jugadores seleccionados</span>
-    <span style={{ fontWeight: 700, color: "var(--fg)" }}>
-      {totalPlayersForm}
-    </span>
-  </div>
+                      {/* Info compacta */}
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          fontSize: "0.78rem",
+                          color: "var(--muted)",
+                        }}
+                      >
+                        <span>Jugadores seleccionados</span>
+                        <span style={{ fontWeight: 700, color: "var(--fg)" }}>
+                          {totalPlayersForm}
+                        </span>
+                      </div>
 
-  {matchesRecommendation && (
-    <div
-      style={{
-        fontSize: "0.72rem",
-        color: "var(--muted)",
-        borderTop: "1px dashed var(--border)",
-        paddingTop: "0.45rem",
-      }}
-    >
-      {matchesRecommendation}
-    </div>
-  )}
-</div>
+                      {matchesRecommendation && (
+                        <div
+                          style={{
+                            fontSize: "0.72rem",
+                            color: "var(--muted)",
+                            borderTop: "1px dashed var(--border)",
+                            paddingTop: "0.45rem",
+                          }}
+                        >
+                          {matchesRecommendation}
+                        </div>
+                      )}
+                    </div>
                   </div>
 
                   {/* Canchas */}
