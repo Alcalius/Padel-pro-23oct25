@@ -4,6 +4,7 @@ import {
   collection,
   doc,
   getDoc,
+  getDocs,
   onSnapshot,
   query,
   where,
@@ -167,16 +168,14 @@ export default function Home() {
   const [stats, setStats] = useState({
     totalMatches: 0,
     totalWins: 0,
+    totalLosses: 0,
     winRate: 0,
     tournamentsPlayed: 0,
   });
 
-  const computedWinRate =
-    stats.totalMatches > 0
-      ? Math.round((stats.totalWins / stats.totalMatches) * 100)
-      : 0;
-
   const [userRecentMatches, setUserRecentMatches] = useState([]);
+  const [allUserMatches, setAllUserMatches] = useState([]);
+  const [loadingAllUserMatches, setLoadingAllUserMatches] = useState(false);
 
   const [clubMembers, setClubMembers] = useState([]);
   const [selectedMember, setSelectedMember] = useState(null);
@@ -190,6 +189,7 @@ export default function Home() {
   const [showRankingModal, setShowRankingModal] = useState(false);
   const [showMemberDetailModal, setShowMemberDetailModal] = useState(false);
   const [showMatchModal, setShowMatchModal] = useState(false);
+  const [showAllUserMatchesModal, setShowAllUserMatchesModal] = useState(false);
   const [selectedMatch, setSelectedMatch] = useState(null);
 
 
@@ -239,6 +239,13 @@ export default function Home() {
           ? data.wins
           : 0;
 
+      const baseLosses =
+        typeof statsData.losses === "number"
+          ? statsData.losses
+          : typeof data.losses === "number"
+          ? data.losses
+          : Math.max(baseTotalMatches - baseWins, 0);
+
       // Recent matches (para stats y para lista de actividad)
       const recent =
         Array.isArray(statsData.recentMatches) && statsData.recentMatches.length
@@ -279,6 +286,7 @@ export default function Home() {
       setStats({
         totalMatches: baseTotalMatches,
         totalWins: baseWins,
+        totalLosses: baseLosses,
         winRate:
           baseTotalMatches > 0
             ? Math.round((baseWins / baseTotalMatches) * 100)
@@ -294,6 +302,121 @@ export default function Home() {
       unsubUser();
     };
   }, [user]);
+
+  // --------------------------
+  // Historial completo del usuario (todos los torneos)
+  // --------------------------
+  useEffect(() => {
+    const loadAllMatches = async () => {
+      if (!user?.uid) return;
+
+      setLoadingAllUserMatches(true);
+      try {
+        const queries = [
+          query(
+            collection(db, "tournaments"),
+            where("players", "array-contains", user.uid)
+          ),
+          query(
+            collection(db, "tournaments"),
+            where("participantsIds", "array-contains", user.uid)
+          ),
+        ];
+        const snaps = await Promise.all(queries.map((q) => getDocs(q)));
+        const docsMap = new Map();
+        snaps.forEach((snap) => {
+          snap.forEach((docSnap) => docsMap.set(docSnap.id, docSnap));
+        });
+        const items = [];
+
+        const getTeamList = (match, keys) => {
+          for (const key of keys) {
+            const value = match?.[key];
+            if (Array.isArray(value)) return value;
+          }
+          return [];
+        };
+
+        const parseScore = (value) => {
+          if (typeof value === "number") {
+            return Number.isFinite(value) ? value : null;
+          }
+          if (typeof value === "string" && value.trim() !== "") {
+            const num = Number(value);
+            return Number.isFinite(num) ? num : null;
+          }
+          return null;
+        };
+
+        docsMap.forEach((docSnap) => {
+          const tData = docSnap.data() || {};
+          const tName = tData.name || "Torneo";
+          const matches = Array.isArray(tData.matches) ? tData.matches : [];
+
+          matches.forEach((match, idx) => {
+            if (!match) return;
+            const s1 = parseScore(match.scoreTeam1);
+            const s2 = parseScore(match.scoreTeam2);
+            if (s1 == null || s2 == null) return;
+
+            const team1 = getTeamList(match, [
+              "team1",
+              "equipo1",
+              "playersTeam1",
+            ]);
+            const team2 = getTeamList(match, [
+              "team2",
+              "equipo2",
+              "playersTeam2",
+            ]);
+            const inTeam1 = team1.includes(user.uid);
+            const inTeam2 = team2.includes(user.uid);
+            if (!inTeam1 && !inTeam2) return;
+
+            const finalS1 = s1;
+            const finalS2 = s2;
+
+            let result = "draw";
+            if (finalS1 !== finalS2) {
+              const userWon = inTeam1 ? finalS1 > finalS2 : finalS2 > finalS1;
+              result = userWon ? "win" : "loss";
+            }
+
+            items.push({
+              id: match.id || `${docSnap.id}-${idx}`,
+              tournamentId: docSnap.id,
+              tournamentName: tName,
+              date:
+                match.completedAt ||
+                match.createdAt ||
+                tData.createdAt ||
+                null,
+              score: `${finalS1} - ${finalS2}`,
+              scoreA: finalS1,
+              scoreB: finalS2,
+              result,
+            });
+          });
+        });
+
+        const toMillis = (value) => {
+          if (!value) return 0;
+          const ms = Date.parse(value);
+          return Number.isNaN(ms) ? 0 : ms;
+        };
+
+        items.sort((a, b) => toMillis(b.date) - toMillis(a.date));
+        setAllUserMatches(items);
+      } catch (err) {
+        console.error("Error cargando historial completo:", err);
+      } finally {
+        setLoadingAllUserMatches(false);
+      }
+    };
+
+    if (!user?.uid || loadingAllUserMatches || allUserMatches.length > 0) return;
+    loadAllMatches();
+  }, [user?.uid, loadingAllUserMatches, allUserMatches.length]);
 
   // --------------------------
   // Torneos del usuario
@@ -453,8 +576,108 @@ export default function Home() {
             )
           : [];
 
+        // -------- historial completo del jugador --------
+        let fullItems = [];
+        try {
+          const matchQueries = [
+            query(
+              collection(db, "tournaments"),
+              where("players", "array-contains", selectedMember.id)
+            ),
+            query(
+              collection(db, "tournaments"),
+              where("participantsIds", "array-contains", selectedMember.id)
+            ),
+          ];
+          const matchSnaps = await Promise.all(
+            matchQueries.map((q) => getDocs(q))
+          );
+          const docsMap = new Map();
+          matchSnaps.forEach((snap) => {
+            snap.forEach((docSnap) => docsMap.set(docSnap.id, docSnap));
+          });
+
+          const getTeamList = (match, keys) => {
+            for (const key of keys) {
+              const value = match?.[key];
+              if (Array.isArray(value)) return value;
+            }
+            return [];
+          };
+
+          const parseScore = (value) => {
+            if (typeof value === "number") {
+              return Number.isFinite(value) ? value : null;
+            }
+            if (typeof value === "string" && value.trim() !== "") {
+              const num = Number(value);
+              return Number.isFinite(num) ? num : null;
+            }
+            return null;
+          };
+
+          docsMap.forEach((docSnap) => {
+            const tData = docSnap.data() || {};
+            const tName = tData.name || "Torneo";
+            const matches = Array.isArray(tData.matches) ? tData.matches : [];
+
+            matches.forEach((match, idx) => {
+              if (!match) return;
+              const s1 = parseScore(match.scoreTeam1);
+              const s2 = parseScore(match.scoreTeam2);
+              if (s1 == null || s2 == null) return;
+
+              const team1 = getTeamList(match, [
+                "team1",
+                "equipo1",
+                "playersTeam1",
+              ]);
+              const team2 = getTeamList(match, [
+                "team2",
+                "equipo2",
+                "playersTeam2",
+              ]);
+              const inTeam1 = team1.includes(selectedMember.id);
+              const inTeam2 = team2.includes(selectedMember.id);
+              if (!inTeam1 && !inTeam2) return;
+
+              const finalS1 = s1;
+              const finalS2 = s2;
+
+              let result = "draw";
+              if (finalS1 !== finalS2) {
+                const userWon = inTeam1 ? finalS1 > finalS2 : finalS2 > finalS1;
+                result = userWon ? "win" : "loss";
+              }
+
+              fullItems.push({
+                id: match.id || `${docSnap.id}-${idx}`,
+                tournamentId: docSnap.id,
+                tournamentName: tName,
+                date:
+                  match.completedAt ||
+                  match.createdAt ||
+                  tData.createdAt ||
+                  null,
+                score: `${finalS1} - ${finalS2}`,
+                scoreA: finalS1,
+                scoreB: finalS2,
+                result,
+              });
+            });
+          });
+        } catch (err) {
+          console.error("Error cargando historial completo del jugador:", err);
+        }
+
+        const sortedAll = fullItems.sort(
+          (a, b) => getMatchDateMillis(b) - getMatchDateMillis(a)
+        );
+        const matchesForStats =
+          sortedAll.length > 0 ? sortedAll : sortedRecent;
+
         // -------- stats numéricas (para el resumen) --------
-        const totalMatches =
+        const fallbackTotalMatches =
           typeof statsData.totalMatches === "number"
             ? statsData.totalMatches
             : Array.isArray(statsData.recentMatches)
@@ -463,25 +686,57 @@ export default function Home() {
             ? data.recentMatches.length
             : 0;
 
-        const wins =
+        const fallbackWins =
           typeof statsData.wins === "number"
             ? statsData.wins
             : typeof data.wins === "number"
             ? data.wins
             : 0;
 
-        const losses =
+        const fallbackLosses =
           typeof statsData.losses === "number"
             ? statsData.losses
-            : Math.max(totalMatches - wins, 0);
+            : Math.max(fallbackTotalMatches - fallbackWins, 0);
 
-        const tournamentsPlayed =
+        const fallbackTournamentsPlayed =
           typeof statsData.tournamentsPlayed === "number"
             ? statsData.tournamentsPlayed
             : typeof data.tournamentsPlayed === "number"
             ? data.tournamentsPlayed
             : 0;
 
+        const totalMatches =
+          matchesForStats.length > 0
+            ? matchesForStats.length
+            : fallbackTotalMatches;
+        const wins =
+          matchesForStats.length > 0
+            ? matchesForStats.reduce(
+                (acc, m) => acc + (m.result === "win" ? 1 : 0),
+                0
+              )
+            : fallbackWins;
+        const losses =
+          matchesForStats.length > 0
+            ? matchesForStats.reduce(
+                (acc, m) => acc + (m.result === "loss" ? 1 : 0),
+                0
+              )
+            : fallbackLosses;
+        const tournamentsPlayed =
+          matchesForStats.length > 0
+            ? new Set(
+                matchesForStats
+                  .map(
+                    (m) =>
+                      m.tournamentId ||
+                      m.torneoId ||
+                      m.tournamentName ||
+                      m.tournament
+                  )
+                  .filter(Boolean)
+              ).size
+            : fallbackTournamentsPlayed;
         const winRate =
           totalMatches > 0 ? Math.round((wins / totalMatches) * 100) : 0;
 
@@ -501,7 +756,7 @@ export default function Home() {
             tournamentsPlayed,
             winRate,
           },
-          recentMatches: sortedRecent,
+          recentMatches: matchesForStats,
         });
       } catch (err) {
         console.error("Error cargando detalle de jugador:", err);
@@ -569,6 +824,86 @@ export default function Home() {
     }, 80);
     return () => clearTimeout(timeout);
   }, [top3Members]);
+
+  const effectiveMatches =
+    allUserMatches.length > 0 ? allUserMatches : userRecentMatches;
+
+  const derivedStats = useMemo(() => {
+    if (!allUserMatches.length) {
+      const totalMatches = stats.totalMatches || 0;
+      const totalWins = stats.totalWins || 0;
+      const totalLosses = stats.totalLosses || 0;
+      const draws = Math.max(totalMatches - totalWins - totalLosses, 0);
+      const winRate =
+        totalMatches > 0 ? Math.round((totalWins / totalMatches) * 100) : 0;
+      const drawRate =
+        totalMatches > 0 ? Math.round((draws / totalMatches) * 100) : 0;
+
+      return {
+        totalMatches,
+        totalWins,
+        totalLosses,
+        draws,
+        winRate,
+        drawRate,
+        tournamentsPlayed: stats.tournamentsPlayed || 0,
+      };
+    }
+
+    const total = allUserMatches.length;
+    const wins = allUserMatches.reduce(
+      (acc, m) => acc + (m.result === "win" ? 1 : 0),
+      0
+    );
+    const losses = allUserMatches.reduce(
+      (acc, m) => acc + (m.result === "loss" ? 1 : 0),
+      0
+    );
+    const draws = allUserMatches.reduce(
+      (acc, m) => acc + (m.result === "draw" ? 1 : 0),
+      0
+    );
+    const winRate = total > 0 ? Math.round((wins / total) * 100) : 0;
+    const drawRate = total > 0 ? Math.round((draws / total) * 100) : 0;
+    const tournamentsPlayed = new Set(
+      allUserMatches
+        .map(
+          (m) =>
+            m.tournamentId ||
+            m.torneoId ||
+            m.tournamentName ||
+            m.tournament
+        )
+        .filter(Boolean)
+    ).size;
+
+    return {
+      totalMatches: total,
+      totalWins: wins,
+      totalLosses: losses,
+      draws,
+      winRate,
+      drawRate,
+      tournamentsPlayed,
+    };
+  }, [
+    allUserMatches,
+    stats.totalMatches,
+    stats.totalWins,
+    stats.totalLosses,
+    stats.tournamentsPlayed,
+  ]);
+
+  const getOutcome = (match) => {
+    if (!match) return null;
+    if (match.result) return match.result;
+    if (typeof match.plDelta === "number") {
+      if (match.plDelta > 0) return "win";
+      if (match.plDelta < 0) return "loss";
+      return "draw";
+    }
+    return null;
+  };
 
 
     // Abrir modal de detalle de un jugador del ranking
@@ -969,12 +1304,22 @@ export default function Home() {
               gap: "0.6rem",
             }}
           >
-            <StatCard label="Partidos jugados" value={stats.totalMatches} />
-            <StatCard label="Victorias" value={stats.totalWins} />
-            <StatCard label="Winrate" value={`${computedWinRate}%`} />
+            <StatCard
+              label="Partidos jugados"
+              value={derivedStats.totalMatches}
+            />
+            <StatCard label="Victorias" value={derivedStats.totalWins} />
+            <StatCard label="Derrotas" value={derivedStats.totalLosses} />
+            <StatCard
+              label="Empates %"
+              value={`${derivedStats.drawRate}%`}
+            />
+            <StatCard label="Winrate" value={`${derivedStats.winRate}%`} />
             <StatCard
               label="Torneos jugados"
-              value={stats.tournamentsPlayed || completedTournaments.length}
+              value={
+                derivedStats.tournamentsPlayed || completedTournaments.length
+              }
             />
           </div>
         </section>
@@ -1182,7 +1527,8 @@ export default function Home() {
           <h3 style={{ margin: 0, fontSize: "0.95rem" }}>Actividad reciente</h3>
 
           <button
-            onClick={() => navigate("/perfil")}
+            type="button"
+            onClick={() => setShowAllUserMatchesModal(true)}
             style={{
               background: "transparent",
               border: "none",
@@ -1196,7 +1542,7 @@ export default function Home() {
           </button>
         </div>
 
-      {userRecentMatches && userRecentMatches.length > 0 ? (
+      {effectiveMatches && effectiveMatches.length > 0 ? (
         <div
           style={{
             display: "flex",
@@ -1204,7 +1550,7 @@ export default function Home() {
             gap: "0.45rem",
           }}
         >
-          {userRecentMatches.slice(0, 5).map((m, idx) => {
+          {effectiveMatches.slice(0, 5).map((m, idx) => {
             const plDelta = typeof m.plDelta === "number" ? m.plDelta : null;
 
             const title = m.tournamentName || m.tournament || "Partido rankeado";
@@ -1216,25 +1562,13 @@ export default function Home() {
                 `${m.scoreA}-${m.scoreB}`) ||
               null;
 
-            // Detectar empate (por marcador o por PL=0)
-            let isTie = false;
-            if (typeof m.scoreA === "number" && typeof m.scoreB === "number") {
-              isTie = m.scoreA === m.scoreB;
-            } else if (typeof m.score === "string") {
-              const parts = m.score.split("-").map((x) => Number(String(x).trim()));
-              if (parts.length === 2 && !Number.isNaN(parts[0]) && !Number.isNaN(parts[1])) {
-                isTie = parts[0] === parts[1];
-              }
-            } else if (plDelta === 0) {
-              isTie = true;
-            }
-
+            const outcome = getOutcome(m);
             const barColor =
-              plDelta != null && plDelta > 0
+              outcome === "win"
                 ? "rgba(34,197,94,0.9)" // verde victoria
-                : plDelta != null && plDelta < 0
+                : outcome === "loss"
                 ? "rgba(239,68,68,0.9)" // rojo derrota
-                : isTie
+                : outcome === "draw"
                 ? "rgba(59,130,246,0.9)" // azul empate
                 : "var(--border)";
 
@@ -1327,7 +1661,7 @@ export default function Home() {
                           ? "rgba(34,197,94,0.95)"
                           : plDelta < 0
                           ? "rgba(239,68,68,0.95)"
-                          : isTie
+                          : outcome === "draw"
                           ? "rgba(59,130,246,0.95)"
                           : "var(--muted)",
                     }}
@@ -1773,7 +2107,7 @@ export default function Home() {
                     paddingRight: "0.1rem",
                   }}
                 >
-                  {memberDetail.recentMatches.slice(0, 8).map((m, idx) => {
+                  {memberDetail.recentMatches.map((m, idx) => {
                     const plDelta =
                       typeof m.plDelta === "number" ? m.plDelta : null;
                     const plText =
@@ -2032,6 +2366,225 @@ export default function Home() {
             </div>
           </div>
         )}
+
+      {/* MODAL: TODOS LOS PARTIDOS DEL USUARIO */}
+      {showAllUserMatchesModal && (
+        <div
+          onClick={() => setShowAllUserMatchesModal(false)}
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.75)",
+            display: "flex",
+            alignItems: "flex-end",
+            justifyContent: "center",
+            padding: "0.9rem",
+            zIndex: 9998,
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: "100%",
+              maxWidth: 520,
+              maxHeight: "82vh",
+              borderRadius: "1.2rem",
+              border: "1px solid var(--border)",
+              background: "var(--bg-elevated)",
+              boxShadow: "0 18px 50px rgba(0,0,0,0.45)",
+              padding: "0.9rem",
+              display: "flex",
+              flexDirection: "column",
+              gap: "0.6rem",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+              }}
+            >
+              <h3 style={{ margin: 0, fontSize: "0.95rem" }}>
+                Todos tus partidos
+              </h3>
+              <button
+                type="button"
+                onClick={() => setShowAllUserMatchesModal(false)}
+                style={{
+                  border: "1px solid var(--border)",
+                  background: "var(--bg)",
+                  color: "var(--fg)",
+                  borderRadius: "999px",
+                  padding: "0.3rem 0.6rem",
+                  cursor: "pointer",
+                  fontSize: "0.78rem",
+                }}
+              >
+                Cerrar
+              </button>
+            </div>
+
+            <div
+              style={{
+                fontSize: "0.75rem",
+                color: "var(--muted)",
+              }}
+            >
+              Mostrando tu historial completo de partidos.
+            </div>
+
+            <div
+              style={{
+                marginTop: "0.3rem",
+                display: "flex",
+                flexDirection: "column",
+                gap: "0.45rem",
+                overflowY: "auto",
+                maxHeight: "60vh",
+                paddingRight: "0.1rem",
+              }}
+            >
+              {loadingAllUserMatches ? (
+                <p style={{ margin: 0, fontSize: "0.8rem", color: "var(--muted)" }}>
+                  Cargando historial completo...
+                </p>
+              ) : effectiveMatches.length === 0 ? (
+                <p style={{ margin: 0, fontSize: "0.8rem", color: "var(--muted)" }}>
+                  No hay partidos para mostrar.
+                </p>
+              ) : (
+                effectiveMatches.map((m, idx) => {
+                  const plDelta =
+                    typeof m.plDelta === "number" ? m.plDelta : null;
+                  const title =
+                    m.tournamentName || m.tournament || "Partido rankeado";
+                  const score =
+                    m.score ||
+                    (typeof m.scoreA === "number" &&
+                      typeof m.scoreB === "number" &&
+                      `${m.scoreA}-${m.scoreB}`) ||
+                    null;
+
+                  const outcome = getOutcome(m);
+                  const barColor =
+                    outcome === "win"
+                      ? "rgba(34,197,94,0.9)"
+                      : outcome === "loss"
+                      ? "rgba(239,68,68,0.9)"
+                      : outcome === "draw"
+                      ? "rgba(59,130,246,0.9)"
+                      : "var(--border)";
+
+                  const plText =
+                    plDelta != null ? `${plDelta > 0 ? "+" : ""}${plDelta} PL` : null;
+
+                  const dateOk = m.date && !Number.isNaN(Date.parse(m.date));
+                  const dateStr = dateOk
+                    ? new Date(m.date).toLocaleDateString("es-MX", {
+                        day: "2-digit",
+                        month: "short",
+                      })
+                    : null;
+
+                  const timeStr = dateOk
+                    ? new Date(m.date).toLocaleString("es-MX", {
+                        day: "2-digit",
+                        month: "short",
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })
+                    : null;
+
+                  return (
+                    <button
+                      key={m.id || idx}
+                      type="button"
+                      onClick={() => {
+                        setSelectedMatch({
+                          ...m,
+                          _title: title,
+                          _score: score,
+                          _timeStr: timeStr,
+                        });
+                        setShowMatchModal(true);
+                      }}
+                      style={{
+                        width: "100%",
+                        textAlign: "left",
+                        borderRadius: "0.9rem",
+                        border: "1px solid var(--border)",
+                        background: "var(--bg-elevated)",
+                        padding: "0.55rem 0.6rem",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "0.55rem",
+                        cursor: "pointer",
+                      }}
+                    >
+                      <div
+                        style={{
+                          width: 6,
+                          alignSelf: "stretch",
+                          borderRadius: 999,
+                          background: barColor,
+                        }}
+                      />
+
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <p
+                          style={{
+                            margin: 0,
+                            fontSize: "0.82rem",
+                            fontWeight: 600,
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {title}
+                        </p>
+                        <p
+                          style={{
+                            margin: 0,
+                            fontSize: "0.75rem",
+                            color: "var(--muted)",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {score ? `Marcador: ${score}` : "Marcador no disponible"}
+                          {dateStr ? ` · ${dateStr}` : ""}
+                        </p>
+                      </div>
+
+                      {plText && (
+                        <span
+                          style={{
+                            fontSize: "0.8rem",
+                            fontWeight: 700,
+                            color:
+                              plDelta > 0
+                                ? "rgba(34,197,94,0.95)"
+                                : plDelta < 0
+                                ? "rgba(239,68,68,0.95)"
+                                : outcome === "draw"
+                                ? "rgba(59,130,246,0.95)"
+                                : "var(--muted)",
+                          }}
+                        >
+                          {plText}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
         {/* Cambios por jugador (si existen) */}
         {selectedMatch.plChanges && typeof selectedMatch.plChanges === "object" && (

@@ -1,7 +1,15 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import { db } from "../firebase/firebase";
-import { doc, getDoc, updateDoc } from "firebase/firestore";
+import {
+  doc,
+  getDoc,
+  updateDoc,
+  collection,
+  query,
+  where,
+  getDocs,
+} from "firebase/firestore";
 import Icon from "../components/common/Icon";
 import { useNavigate } from "react-router-dom";
 import { getAuth, updatePassword } from "firebase/auth";
@@ -171,6 +179,8 @@ export default function Profile() {
   const [successMsg, setSuccessMsg] = useState("");
 
   const [showAllMatches, setShowAllMatches] = useState(false);
+  const [allMatches, setAllMatches] = useState([]);
+  const [loadingAllMatches, setLoadingAllMatches] = useState(false);
 
   const [animatedProgress, setAnimatedProgress] = useState(0);
 
@@ -367,6 +377,119 @@ export default function Profile() {
     return () => clearTimeout(timeout);
   }, [profile]);
 
+  // -------- HISTORIAL COMPLETO (consulta a torneos) --------
+  useEffect(() => {
+    const loadAllMatches = async () => {
+      if (!user?.uid) return;
+
+      setLoadingAllMatches(true);
+      try {
+        const queries = [
+          query(
+            collection(db, "tournaments"),
+            where("players", "array-contains", user.uid)
+          ),
+          query(
+            collection(db, "tournaments"),
+            where("participantsIds", "array-contains", user.uid)
+          ),
+        ];
+        const snaps = await Promise.all(queries.map((q) => getDocs(q)));
+        const docsMap = new Map();
+        snaps.forEach((snap) => {
+          snap.forEach((docSnap) => docsMap.set(docSnap.id, docSnap));
+        });
+        const items = [];
+
+        const getTeamList = (match, keys) => {
+          for (const key of keys) {
+            const value = match?.[key];
+            if (Array.isArray(value)) return value;
+          }
+          return [];
+        };
+
+        const parseScore = (value) => {
+          if (typeof value === "number") {
+            return Number.isFinite(value) ? value : null;
+          }
+          if (typeof value === "string" && value.trim() !== "") {
+            const num = Number(value);
+            return Number.isFinite(num) ? num : null;
+          }
+          return null;
+        };
+
+        docsMap.forEach((docSnap) => {
+          const tData = docSnap.data() || {};
+          const tName = tData.name || "Torneo";
+          const matches = Array.isArray(tData.matches) ? tData.matches : [];
+
+          matches.forEach((match, idx) => {
+            if (!match) return;
+            const s1 = parseScore(match.scoreTeam1);
+            const s2 = parseScore(match.scoreTeam2);
+            if (s1 == null || s2 == null) return;
+
+            const team1 = getTeamList(match, [
+              "team1",
+              "equipo1",
+              "playersTeam1",
+            ]);
+            const team2 = getTeamList(match, [
+              "team2",
+              "equipo2",
+              "playersTeam2",
+            ]);
+            const inTeam1 = team1.includes(user.uid);
+            const inTeam2 = team2.includes(user.uid);
+            if (!inTeam1 && !inTeam2) return;
+
+            const finalS1 = s1;
+            const finalS2 = s2;
+
+            let result = "draw";
+            if (finalS1 !== finalS2) {
+              const userWon = inTeam1 ? finalS1 > finalS2 : finalS2 > finalS1;
+              result = userWon ? "win" : "loss";
+            }
+
+            items.push({
+              id: match.id || `${docSnap.id}-${idx}`,
+              tournamentId: docSnap.id,
+              tournamentName: tName,
+              date:
+                match.completedAt ||
+                match.createdAt ||
+                tData.createdAt ||
+                null,
+              score: `${finalS1} - ${finalS2}`,
+              scoreA: finalS1,
+              scoreB: finalS2,
+              result,
+            });
+          });
+        });
+
+        const toMillis = (value) => {
+          if (!value) return 0;
+          const ms = Date.parse(value);
+          return Number.isNaN(ms) ? 0 : ms;
+        };
+
+        items.sort((a, b) => toMillis(b.date) - toMillis(a.date));
+        setAllMatches(items);
+      } catch (err) {
+        console.error("Error cargando historial completo:", err);
+      } finally {
+        setLoadingAllMatches(false);
+      }
+    };
+
+    if (!user?.uid || loadingAllMatches || allMatches.length > 0) return;
+    loadAllMatches();
+  }, [user?.uid, loadingAllMatches, allMatches.length]);
+
   // -------- MANEJO DE CAMPOS DE TEXTO --------
   const handleChange = (field, value) => {
     setLocalEdit((prev) => ({ ...prev, [field]: value }));
@@ -552,6 +675,92 @@ export default function Profile() {
       console.error("Error al cerrar sesión:", err);
     }
   };
+
+  const pl = profile?.leaguePoints || 0;
+  const rankInfo = getRankInfoFromData(profile?.rank, pl);
+  const accumulatedPL = computeAccumulatedPL(rankInfo.label, pl);
+
+  const recentMatches = stats.recentMatches || [];
+  const fullMatches = allMatches.length > 0 ? allMatches : recentMatches;
+  const previewMatches =
+    recentMatches.length > 0 ? recentMatches : fullMatches;
+  const limitedMatches = previewMatches.slice(0, 5);
+  const hasMoreMatches = fullMatches.length > 5;
+
+  const monthlyActivity = buildMonthlyActivity(fullMatches);
+
+  const derivedStats = useMemo(() => {
+    if (!fullMatches.length) {
+      const totalMatches = stats.totalMatches || 0;
+      const wins = stats.wins || 0;
+      const losses = stats.losses || 0;
+      const draws = Math.max(totalMatches - wins - losses, 0);
+      const winRate =
+        totalMatches > 0 ? Math.round((wins / totalMatches) * 100) : 0;
+      const drawRate =
+        totalMatches > 0 ? Math.round((draws / totalMatches) * 100) : 0;
+
+      return {
+        totalMatches,
+        wins,
+        losses,
+        draws,
+        winRate,
+        drawRate,
+        tournamentsPlayed: stats.tournamentsPlayed || 0,
+      };
+    }
+
+    const wins = fullMatches.reduce(
+      (acc, m) => acc + (m.result === "win" ? 1 : 0),
+      0
+    );
+    const losses = fullMatches.reduce(
+      (acc, m) => acc + (m.result === "loss" ? 1 : 0),
+      0
+    );
+    const draws = fullMatches.reduce(
+      (acc, m) => acc + (m.result === "draw" ? 1 : 0),
+      0
+    );
+    const total = fullMatches.length;
+    const winRate = total > 0 ? Math.round((wins / total) * 100) : 0;
+    const drawRate = total > 0 ? Math.round((draws / total) * 100) : 0;
+    const tournamentsPlayed = new Set(
+      fullMatches
+        .map(
+          (m) =>
+            m.tournamentId ||
+            m.torneoId ||
+            m.tournamentName ||
+            m.tournament
+        )
+        .filter(Boolean)
+    ).size;
+
+    return {
+      totalMatches: total,
+      wins,
+      losses,
+      draws,
+      winRate,
+      drawRate,
+      tournamentsPlayed,
+    };
+  }, [
+    fullMatches,
+    stats.totalMatches,
+    stats.wins,
+    stats.losses,
+    stats.winRate,
+    stats.tournamentsPlayed,
+  ]);
+
+  const totalMatchesDisplay = derivedStats.totalMatches;
+  const maxActivity =
+    monthlyActivity.length > 0
+      ? Math.max(...monthlyActivity.map((m) => m.value))
+      : 0;
 
   // -------- RENDER --------
   if (!user) {
@@ -882,20 +1091,6 @@ export default function Profile() {
       </div>
     );
   }
-
-  const pl = profile.leaguePoints || 0;
-  const rankInfo = getRankInfoFromData(profile.rank, pl);
-  const accumulatedPL = computeAccumulatedPL(rankInfo.label, pl);
-
-  const recentMatches = stats.recentMatches || [];
-  const limitedMatches = recentMatches.slice(0, 5);
-  const hasMoreMatches = recentMatches.length > 5;
-
-  const monthlyActivity = buildMonthlyActivity(recentMatches);
-  const maxActivity =
-    monthlyActivity.length > 0
-      ? Math.max(...monthlyActivity.map((m) => m.value))
-      : 0;
 
   return (
     <>
@@ -1496,13 +1691,14 @@ export default function Profile() {
           gap: "0.7rem",
         }}
       >
-        <MiniStatCard label="Partidos" value={stats.totalMatches} />
-        <MiniStatCard label="Victorias" value={stats.wins} />
-        <MiniStatCard label="Derrotas" value={stats.losses} />
-        <MiniStatCard label="Winrate" value={stats.winRate} suffix="%" />
+        <MiniStatCard label="Partidos" value={totalMatchesDisplay} />
+        <MiniStatCard label="Victorias" value={derivedStats.wins} />
+        <MiniStatCard label="Derrotas" value={derivedStats.losses} />
+        <MiniStatCard label="Empates %" value={derivedStats.drawRate} suffix="%" />
+        <MiniStatCard label="Winrate" value={derivedStats.winRate} suffix="%" />
         <MiniStatCard
           label="Torneos"
-          value={stats.tournamentsPlayed}
+          value={derivedStats.tournamentsPlayed}
         />
         <MiniStatCard
           label="PL Acumulados"
@@ -1663,7 +1859,7 @@ export default function Profile() {
             Partidos recientes
           </h3>
 
-          {recentMatches && recentMatches.length > 0 ? (
+          {previewMatches.length > 0 ? (
             <>
               <div
                 style={{
@@ -1703,6 +1899,7 @@ export default function Profile() {
                       dateStr={dateStr}
                       plDelta={plDelta}
                       plText={plText}
+                      result={m.result}
                     />
                   );
                 })}
@@ -1836,40 +2033,51 @@ export default function Profile() {
                 paddingRight: "0.1rem",
               }}
             >
-              {recentMatches.map((m, idx) => {
-                const plDelta =
-                  typeof m.plDelta === "number" ? m.plDelta : null;
-                const plText =
-                  plDelta != null
-                    ? `${plDelta > 0 ? "+" : ""}${plDelta} PL`
-                    : null;
-                const dateStr =
-                  m.date && !Number.isNaN(Date.parse(m.date))
-                    ? new Date(m.date).toLocaleDateString("es-MX", {
-                        day: "2-digit",
-                        month: "short",
-                      })
-                    : null;
-                const title =
-                  m.tournamentName || m.tournament || "Partido rankeado";
-                const score =
-                  m.score ||
-                  (typeof m.scoreA === "number" &&
-                    typeof m.scoreB === "number" &&
-                    `${m.scoreA}-${m.scoreB}`) ||
-                  null;
+              {loadingAllMatches ? (
+                <p style={{ margin: 0, fontSize: "0.8rem", color: "var(--muted)" }}>
+                  Cargando historial completo...
+                </p>
+              ) : fullMatches.length === 0 ? (
+                <p style={{ margin: 0, fontSize: "0.8rem", color: "var(--muted)" }}>
+                  No hay partidos para mostrar.
+                </p>
+              ) : (
+                fullMatches.map((m, idx) => {
+                  const plDelta =
+                    typeof m.plDelta === "number" ? m.plDelta : null;
+                  const plText =
+                    plDelta != null
+                      ? `${plDelta > 0 ? "+" : ""}${plDelta} PL`
+                      : null;
+                  const dateStr =
+                    m.date && !Number.isNaN(Date.parse(m.date))
+                      ? new Date(m.date).toLocaleDateString("es-MX", {
+                          day: "2-digit",
+                          month: "short",
+                        })
+                      : null;
+                  const title =
+                    m.tournamentName || m.tournament || "Partido rankeado";
+                  const score =
+                    m.score ||
+                    (typeof m.scoreA === "number" &&
+                      typeof m.scoreB === "number" &&
+                      `${m.scoreA}-${m.scoreB}`) ||
+                    null;
 
-                return (
-                  <RecentMatchCard
-                    key={m.id || `modal-${idx}`}
-                    title={title}
-                    score={score}
-                    dateStr={dateStr}
-                    plDelta={plDelta}
-                    plText={plText}
-                  />
-                );
-              })}
+                  return (
+                    <RecentMatchCard
+                      key={m.id || `modal-${idx}`}
+                      title={title}
+                      score={score}
+                      dateStr={dateStr}
+                      plDelta={plDelta}
+                      plText={plText}
+                      result={m.result}
+                    />
+                  );
+                })
+              )}
             </div>
           </div>
         </div>
@@ -1914,7 +2122,20 @@ function MiniStatCard({ label, value, suffix }) {
   );
 }
 
-function RecentMatchCard({ title, score, dateStr, plDelta, plText }) {
+function RecentMatchCard({ title, score, dateStr, plDelta, plText, result }) {
+  const barColor = (() => {
+    if (plDelta != null) {
+      if (plDelta > 0) return "rgba(34,197,94,0.9)";
+      if (plDelta < 0) return "rgba(239,68,68,0.9)";
+      return "rgba(59,130,246,0.9)";
+    }
+
+    if (result === "win") return "rgba(34,197,94,0.9)";
+    if (result === "loss") return "rgba(239,68,68,0.9)";
+    if (result === "draw") return "rgba(59,130,246,0.9)";
+    return "var(--border)";
+  })();
+
   return (
     <div
       style={{
@@ -1932,12 +2153,7 @@ function RecentMatchCard({ title, score, dateStr, plDelta, plText }) {
           width: 6,
           alignSelf: "stretch",
           borderRadius: 999,
-          background:
-            plDelta != null && plDelta > 0
-              ? "rgba(34,197,94,0.9)"
-              : plDelta != null && plDelta < 0
-              ? "rgba(239,68,68,0.9)"
-              : "var(--border)",
+          background: barColor,
         }}
       />
       <div
