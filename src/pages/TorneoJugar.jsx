@@ -794,26 +794,6 @@ if (tournament) {
     );
   };
 
-const handleSaveBothCourtsResults = async () => {
-  if (activeCourts < 2 || !matchCourt1 || !matchCourt2) return;
-
-  if (!scoreTouched[1] || !scoreTouched[2]) {
-    showToast("Primero captura el marcador de ambas canchas.", "warning");
-    return;
-  }
-
-  const s1 = scores[1] || { team1: 0, team2: 0 };
-  const s2 = scores[2] || { team1: 0, team2: 0 };
-
-  // Validaciones rápidas (mismas reglas que usas en saveMatchResult)
-  const isValidScore = (a, b) => {
-    if (a == null || b == null) return false;
-    if (Number.isNaN(a) || Number.isNaN(b)) return false;
-    if (a < 0 || b < 0 || a > 4 || b > 4) return false;
-    if (a + b !== TOTAL_POINTS) return false;
-    return true;
-  };
-
   // -----------------------------------
   // Asistencia y canchas activas
   // -----------------------------------
@@ -863,6 +843,26 @@ const handleSaveBothCourtsResults = async () => {
       setSavingCourts(false);
     }
   };
+
+  const handleSaveBothCourtsResults = async () => {
+    if (activeCourts < 2 || !matchCourt1 || !matchCourt2) return;
+
+    if (!scoreTouched[1] || !scoreTouched[2]) {
+      showToast("Primero captura el marcador de ambas canchas.", "warning");
+      return;
+    }
+
+    const s1 = scores[1] || { team1: 0, team2: 0 };
+    const s2 = scores[2] || { team1: 0, team2: 0 };
+
+    // Validaciones rápidas (mismas reglas que usas en saveMatchResult)
+    const isValidScore = (a, b) => {
+      if (a == null || b == null) return false;
+      if (Number.isNaN(a) || Number.isNaN(b)) return false;
+      if (a < 0 || b < 0 || a > 4 || b > 4) return false;
+      if (a + b !== TOTAL_POINTS) return false;
+      return true;
+    };
 
   if (!isValidScore(s1.team1, s1.team2) || !isValidScore(s2.team1, s2.team2)) {
     showToast(
