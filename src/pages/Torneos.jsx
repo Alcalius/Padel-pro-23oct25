@@ -12,6 +12,7 @@ import { db } from "../firebase/firebase";
 import { useAuth } from "../context/AuthContext";
 import { useNavigate, useLocation } from "react-router-dom";
 import Icon from "../components/common/Icon";
+import { useToast } from "../context/ToastContext";
 
 const MONTH_NAMES_ES = [
   "Enero",
@@ -30,6 +31,7 @@ const MONTH_NAMES_ES = [
 
 export default function Torneos() {
   const { user } = useAuth();
+  const { showToast } = useToast();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -617,9 +619,10 @@ const generateInitialMatches = (playerIds, desiredMatchCount, courts = 1) => {
       setShowPreview(false);
       setShowCreate(false);
       setSuccessMsg("Torneo creado correctamente.");
+      showToast("Torneo creado correctamente.", "success");
 
       // 👉 Ir directo al torneo recién creado
-      navigate(`/torneos/${docRef.id}`);
+      navigate(`/torneos/${docRef.id}`, { state: { fromCreate: true } });
     } catch (err) {
       console.error("Error creando torneo:", err);
       setErrorMsg("No se pudo crear el torneo.");
@@ -1115,6 +1118,7 @@ const generateInitialMatches = (playerIds, desiredMatchCount, courts = 1) => {
               setShowCreate(true);
             }}
             disabled={!hasActiveClub}
+            className="btn btn-primary btn-glow pressable"
             style={{
               flex: 1,
               borderRadius: "999px",
@@ -1139,6 +1143,7 @@ const generateInitialMatches = (playerIds, desiredMatchCount, courts = 1) => {
           <button
             type="button"
             onClick={() => navigate("/clubes")}
+            className="btn btn-ghost pressable"
             style={{
               borderRadius: "999px",
               border: "1px solid var(--border)",
@@ -1176,6 +1181,7 @@ const generateInitialMatches = (playerIds, desiredMatchCount, courts = 1) => {
       {/* WIZARD CREAR TORNEO (pantalla completa) */}
       {showCreate && hasActiveClub && (
         <div
+          className="modal-backdrop"
           style={{
             position: "fixed",
             top: "3.3rem", // deja libre la top bar
@@ -1193,6 +1199,7 @@ const generateInitialMatches = (playerIds, desiredMatchCount, courts = 1) => {
           }}
         >
           <div
+            className="modal-panel"
             style={{
               width: "100%",
               maxWidth: 520,
@@ -1323,6 +1330,7 @@ const generateInitialMatches = (playerIds, desiredMatchCount, courts = 1) => {
                       resetMessages();
                       setCreateStep(step);
                     }}
+                    className="pressable"
                     style={{
                       flex: 1,
                       display: "flex",
@@ -2399,6 +2407,7 @@ const generateInitialMatches = (playerIds, desiredMatchCount, courts = 1) => {
                     handleCreateTournament();
                   }
                 }}
+                className="btn btn-primary btn-glow pressable"
                 style={{
                   flex: 1.2,
                   borderRadius: "0.9rem",
@@ -2464,6 +2473,7 @@ const generateInitialMatches = (playerIds, desiredMatchCount, courts = 1) => {
               <article
                 key={t.id}
                 onClick={() => navigate(`/torneos/${t.id}`)}
+                className="interactive-card pressable"
                 style={{
                   borderRadius: "0.9rem",
                   border: "1px solid var(--border)",

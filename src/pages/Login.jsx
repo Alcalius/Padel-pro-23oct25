@@ -270,6 +270,7 @@ export default function Login() {
 
   return (
     <div
+      className="auth-screen"
       style={{
         minHeight: "100vh",
         display: "flex",
@@ -319,6 +320,7 @@ export default function Login() {
 
       {/* Contenido principal (sin card, solo ancho limitado) */}
       <div
+        className="auth-card"
         style={{
           width: "100%",
           maxWidth: "440px",
@@ -338,6 +340,7 @@ export default function Login() {
             type="button"
             onClick={() => setIsLogin(true)}
             disabled={loading}
+            className="pressable"
             style={{
               flex: 1,
               border: "none",
@@ -362,6 +365,7 @@ export default function Login() {
             type="button"
             onClick={() => setIsLogin(false)}
             disabled={loading}
+            className="pressable"
             style={{
               flex: 1,
               border: "none",
@@ -528,6 +532,7 @@ export default function Login() {
                 type="button"
                 onClick={handleForgotPassword}
                 disabled={loading}
+              className="pressable"
                 style={{
                   border: "none",
                   background: "none",
@@ -546,6 +551,7 @@ export default function Login() {
             <button
               type="submit"
               disabled={loading}
+              className="btn btn-primary btn-glow pressable"
               style={{
                 width: "100%",
                 padding: "0.8rem",
@@ -803,6 +809,7 @@ export default function Login() {
             <button
               type="submit"
               disabled={loading}
+              className="btn btn-primary btn-glow pressable"
               style={{
                 width: "100%",
                 padding: "0.8rem",
@@ -860,6 +867,7 @@ export default function Login() {
             type="button"
             onClick={handleToggleMode}
             disabled={loading}
+            className="pressable"
             style={{
               border: "none",
               background: "none",

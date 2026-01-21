@@ -4,11 +4,13 @@ import { doc, getDoc, onSnapshot, updateDoc } from "firebase/firestore";
 import { db } from "../firebase/firebase";
 import { useAuth } from "../context/AuthContext";
 import Icon from "../components/common/Icon";
+import { useToast } from "../context/ToastContext";
 
 export default function FinalJugar() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { user } = useAuth(); // Por si luego queremos validar creador, etc.
+  const { showToast } = useToast();
 
   const [tournament, setTournament] = useState(null);
   const [playersInfo, setPlayersInfo] = useState({});
@@ -19,6 +21,7 @@ export default function FinalJugar() {
   const [savingFinalKey, setSavingFinalKey] = useState(null); // "A" | "B"
   const [errorMsg, setErrorMsg] = useState("");
   const [successMsg, setSuccessMsg] = useState("");
+  const [finalPulse, setFinalPulse] = useState(null);
 
   const resetMessages = () => {
     setErrorMsg("");
@@ -230,6 +233,7 @@ export default function FinalJugar() {
 
     if (s1 === s2) {
       setErrorMsg("En la final debe haber un ganador (no se permite empate).");
+      showToast("En la final debe haber un ganador (no se permite empate).", "warning");
       return;
     }
 
@@ -256,9 +260,18 @@ export default function FinalJugar() {
           ? "Resultado de la Final A guardado."
           : "Resultado de la Final B guardado."
       );
+      showToast(
+        key === "A"
+          ? "Resultado de la Final A guardado."
+          : "Resultado de la Final B guardado.",
+        "success"
+      );
+      setFinalPulse(key);
+      setTimeout(() => setFinalPulse(null), 900);
     } catch (err) {
       console.error("Error guardando resultado de final:", err);
       setErrorMsg("No se pudo guardar el resultado de la final.");
+      showToast("No se pudo guardar el resultado de la final.", "error");
     } finally {
       setSavingFinalKey(null);
     }
@@ -689,6 +702,7 @@ export default function FinalJugar() {
 
           {/* Zona de cancha final (campo grande) */}
           <div
+            className={`final-card ${finalPulse === visibleKey ? "final-card--saved" : ""}`}
             style={{
               borderRadius: "0.9rem",
               padding: "0.7rem 0.6rem",
@@ -895,6 +909,7 @@ export default function FinalJugar() {
                 type="button"
                 onClick={() => handleSaveFinal(visibleKey)}
                 disabled={savingFinalKey === visibleKey}
+                className="btn btn-primary btn-glow pressable"
                 style={{
                   borderRadius: "0.9rem",
                   border: "none",

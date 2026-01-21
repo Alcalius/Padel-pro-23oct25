@@ -5,6 +5,7 @@ import { doc, getDoc, updateDoc } from "firebase/firestore";
 import Icon from "../components/common/Icon";
 import { useNavigate } from "react-router-dom";
 import { getAuth, updatePassword } from "firebase/auth";
+import { useToast } from "../context/ToastContext";
 
 // Imágenes de rangos
 import bronceImg from "../assets/rangos/bronce.png";
@@ -136,6 +137,7 @@ function getRankInfoFromData(rankName, leaguePoints) {
 export default function Profile() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const { showToast } = useToast();
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -463,13 +465,16 @@ export default function Profile() {
     if (!file) return;
 
     if (!file.type.startsWith("image/")) {
-      alert("Selecciona una imagen válida.");
+      showToast("Selecciona una imagen válida.", "warning");
       e.target.value = "";
       return;
     }
 
     if (file.size > 15 * 1024 * 1024) {
-      alert("La imagen es demasiado grande (más de 15MB). Elige otra por favor.");
+      showToast(
+        "La imagen es demasiado grande (más de 15MB). Elige otra por favor.",
+        "warning"
+      );
       e.target.value = "";
       return;
     }

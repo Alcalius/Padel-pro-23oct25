@@ -2,6 +2,8 @@ import { createContext, useContext, useEffect, useState } from "react";
 import { auth } from "../firebase/firebase";
 import {
   onAuthStateChanged,
+  setPersistence,
+  browserLocalPersistence,
   signInWithEmailAndPassword,
   signOut,
 } from "firebase/auth";
@@ -13,11 +15,30 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, (firebaseUser) => {
-      setUser(firebaseUser);
-      setLoading(false);
-    });
-    return unsub;
+    let unsub = () => {};
+    let isMounted = true;
+
+    const initAuth = async () => {
+      try {
+        // Mantener sesión entre recargas y por dispositivo
+        await setPersistence(auth, browserLocalPersistence);
+      } catch (err) {
+        console.error("Error configurando persistencia de sesión:", err);
+      }
+
+      if (!isMounted) return;
+      unsub = onAuthStateChanged(auth, (firebaseUser) => {
+        setUser(firebaseUser);
+        setLoading(false);
+      });
+    };
+
+    initAuth();
+
+    return () => {
+      isMounted = false;
+      unsub();
+    };
   }, []);
 
   const login = (email, password) => {

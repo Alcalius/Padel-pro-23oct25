@@ -1,14 +1,19 @@
 import { useEffect, useMemo, useState } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { doc, getDoc, onSnapshot, updateDoc } from "firebase/firestore";
 import { db } from "../firebase/firebase";
 import { useAuth } from "../context/AuthContext";
 import Icon from "../components/common/Icon";
+import { useToast } from "../context/ToastContext";
+
+const COST_STEP = 50;
 
 export default function TorneoDetalle() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const { user } = useAuth();
+  const { showToast } = useToast();
   const userId = user?.uid || null;
 
   const [tournament, setTournament] = useState(null);
@@ -18,6 +23,7 @@ export default function TorneoDetalle() {
   const [savingStatus, setSavingStatus] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
   const [successMsg, setSuccessMsg] = useState("");
+  const [heroPulse, setHeroPulse] = useState(false);
   const [activeTab, setActiveTab] = useState("summary"); // summary | ranking | history
   const [creatingFinal, setCreatingFinal] = useState(false);
   const [isClubAdmin, setIsClubAdmin] = useState(false);
@@ -28,12 +34,21 @@ export default function TorneoDetalle() {
   const [costPerHour, setCostPerHour] = useState("");
   const [hoursCourt1, setHoursCourt1] = useState("");
   const [hoursCourt2, setHoursCourt2] = useState("");
-  const [playersPaying, setPlayersPaying] = useState("");
+  const [payerMap, setPayerMap] = useState({});
 
   const resetMessages = () => {
     setErrorMsg("");
     setSuccessMsg("");
   };
+
+  useEffect(() => {
+    if (!location.state?.fromCreate) return;
+    showToast("Torneo creado correctamente.", "success");
+    setHeroPulse(true);
+    const timer = setTimeout(() => setHeroPulse(false), 1100);
+    navigate(location.pathname, { replace: true, state: {} });
+    return () => clearTimeout(timer);
+  }, [location.state, showToast, navigate, location.pathname]);
 
   // Escuchar el torneo en tiempo real
   useEffect(() => {
@@ -284,6 +299,42 @@ export default function TorneoDetalle() {
     };
   }, [tournament, playersInfo]);
 
+  const costPlayers = useMemo(() => {
+    if (!tournament) return [];
+    const realPlayers = Array.isArray(tournament.players)
+      ? tournament.players
+      : [];
+    const guests = Array.isArray(tournament.guestPlayers)
+      ? tournament.guestPlayers.map((_, idx) => `guest-${idx}`)
+      : [];
+    return [...realPlayers, ...guests];
+  }, [tournament]);
+
+  useEffect(() => {
+    if (!costPlayers.length) return;
+    setPayerMap((prev) => {
+      const safePrev = prev || {};
+      const next = { ...safePrev };
+      let changed = false;
+
+      Object.keys(next).forEach((id) => {
+        if (!costPlayers.includes(id)) {
+          delete next[id];
+          changed = true;
+        }
+      });
+
+      costPlayers.forEach((id) => {
+        if (typeof next[id] !== "boolean") {
+          next[id] = true;
+          changed = true;
+        }
+      });
+
+      return changed ? next : safePrev;
+    });
+  }, [costPlayers]);
+
   // Datos derivados para el modal de costos
   const courtsCount =
     tournament?.maxCourts ||
@@ -296,23 +347,74 @@ export default function TorneoDetalle() {
   const numericHours2 = courtsCount >= 2 ? Number(hoursCourt2) || 0 : 0;
   const totalHours = numericHours1 + numericHours2;
   const totalCost = numericCostPerHour * totalHours;
-  const numericPlayersPaying = Number(playersPaying) || 0;
+  const payerCount = costPlayers.filter((id) => payerMap[id] !== false).length;
+  const exemptCount = Math.max(0, costPlayers.length - payerCount);
   const costPerPlayer =
-    totalCost > 0 && numericPlayersPaying > 0
-      ? totalCost / numericPlayersPaying
+    totalCost > 0 && payerCount > 0
+      ? totalCost / payerCount
       : 0;
 
-  const openCostModal = () => {
-    const totalPlayers = stats?.totalPlayers || 0;
-    if (!playersPaying && totalPlayers > 0) {
-      setPlayersPaying(String(totalPlayers));
+  const handleCostChange = (value) => {
+    const cleaned = String(value).replace(/[^\d]/g, "");
+    if (cleaned === "") {
+      setCostPerHour("");
+      return;
     }
+    const numeric = Math.max(0, Number(cleaned) || 0);
+    setCostPerHour(String(numeric));
+  };
 
+  const handleCostBlur = () => {
+    const numeric = Number(costPerHour);
+    if (!Number.isFinite(numeric)) {
+      setCostPerHour("0");
+      return;
+    }
+    const snapped = Math.round(numeric / COST_STEP) * COST_STEP;
+    setCostPerHour(String(Math.max(0, snapped)));
+  };
+
+  const handleCostStep = (delta) => {
+    const current = Number(costPerHour) || 0;
+    const next = Math.max(0, current + delta);
+    setCostPerHour(String(next));
+  };
+
+  const togglePayer = (playerId) => {
+    setPayerMap((prev) => ({
+      ...(prev || {}),
+      [playerId]: !(prev && prev[playerId] !== false),
+    }));
+  };
+
+  const setAllPayers = (value) => {
+    const next = {};
+    costPlayers.forEach((id) => {
+      next[id] = value;
+    });
+    setPayerMap(next);
+  };
+
+  const openCostModal = () => {
+    const totalPlayers = costPlayers.length || stats?.totalPlayers || 0;
     if (!hoursCourt1) {
       setHoursCourt1("1");
     }
     if (courtsCount >= 2 && !hoursCourt2) {
       setHoursCourt2("1");
+    }
+    if (!costPerHour) {
+      setCostPerHour("0");
+    }
+    if (totalPlayers > 0 && costPlayers.length > 0) {
+      setPayerMap((prev) => {
+        if (prev && Object.keys(prev).length) return prev;
+        const next = {};
+        costPlayers.forEach((id) => {
+          next[id] = true;
+        });
+        return next;
+      });
     }
 
     setShowCostModal(true);
@@ -329,8 +431,9 @@ export default function TorneoDetalle() {
     }
 
     if (stats.ranking.length < 4) {
-      window.alert(
-        "Necesitas al menos 4 jugadores con partidos jugados para crear la final del Round Robin."
+      showToast(
+        "Necesitas al menos 4 jugadores con partidos jugados para crear la final.",
+        "warning"
       );
       return;
     }
@@ -437,9 +540,11 @@ export default function TorneoDetalle() {
         completedAt: new Date().toISOString(),
       });
       setSuccessMsg("Torneo marcado como completado 🏆");
+      showToast("Torneo marcado como completado.", "success");
     } catch (err) {
       console.error("Error completando torneo:", err);
       setErrorMsg("No se pudo completar el torneo.");
+      showToast("No se pudo completar el torneo.", "error");
     } finally {
       setSavingStatus(false);
     }
@@ -503,6 +608,7 @@ export default function TorneoDetalle() {
     >
       {/* HEADER */}
       <section
+        className={`card hero-card ${heroPulse ? "hero-card--pulse" : ""}`}
         style={{
           borderRadius: "1.2rem",
           padding: "1rem 1.1rem",
@@ -1503,6 +1609,8 @@ export default function TorneoDetalle() {
             style={{
               maxWidth: 380,
               width: "90%",
+              maxHeight: "85vh",
+              overflow: "auto",
               padding: "0.9rem 1rem 0.8rem 1rem",
               cursor: "default",
             }}
@@ -1551,36 +1659,82 @@ export default function TorneoDetalle() {
                   style={{
                     display: "flex",
                     alignItems: "center",
-                    gap: "0.25rem",
-                    borderRadius: "0.7rem",
-                    border: "1px solid var(--border)",
-                    padding: "0.25rem 0.5rem",
-                    background: "var(--bg)",
+                    gap: "0.35rem",
                   }}
                 >
-                  <span
+                  <button
+                    type="button"
+                    className="chip-button subtle"
+                    onClick={() => handleCostStep(-COST_STEP)}
+                    disabled={numericCostPerHour <= 0}
                     style={{
-                      fontSize: "0.8rem",
-                      color: "var(--muted)",
+                      padding: "0.25rem 0.6rem",
+                      fontSize: "0.72rem",
+                      opacity: numericCostPerHour <= 0 ? 0.5 : 1,
+                      cursor:
+                        numericCostPerHour <= 0 ? "default" : "pointer",
                     }}
                   >
-                    $
-                  </span>
-                  <input
-                    type="number"
-                    inputMode="decimal"
-                    min="0"
-                    value={costPerHour}
-                    onChange={(e) => setCostPerHour(e.target.value)}
+                    -50
+                  </button>
+                  <div
                     style={{
-                      border: "none",
-                      outline: "none",
-                      background: "transparent",
-                      fontSize: "0.8rem",
                       flex: 1,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "0.25rem",
+                      borderRadius: "0.7rem",
+                      border: "1px solid var(--border)",
+                      padding: "0.3rem 0.5rem",
+                      background: "var(--bg)",
                     }}
-                  />
+                  >
+                    <span
+                      style={{
+                        fontSize: "0.8rem",
+                        color: "var(--muted)",
+                      }}
+                    >
+                      $
+                    </span>
+                    <input
+                      type="number"
+                      inputMode="numeric"
+                      min="0"
+                      step={COST_STEP}
+                      placeholder="0"
+                      value={costPerHour}
+                      onChange={(e) => handleCostChange(e.target.value)}
+                      onBlur={handleCostBlur}
+                      style={{
+                        border: "none",
+                        outline: "none",
+                        background: "transparent",
+                        fontSize: "0.8rem",
+                        flex: 1,
+                      }}
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    className="chip-button"
+                    onClick={() => handleCostStep(COST_STEP)}
+                    style={{
+                      padding: "0.25rem 0.6rem",
+                      fontSize: "0.72rem",
+                    }}
+                  >
+                    +50
+                  </button>
                 </div>
+                <span
+                  style={{
+                    fontSize: "0.7rem",
+                    color: "var(--muted)",
+                  }}
+                >
+                  Incrementos de $50
+                </span>
               </label>
 
               <div
@@ -1604,6 +1758,8 @@ export default function TorneoDetalle() {
                     type="number"
                     inputMode="decimal"
                     min="0"
+                    step="0.5"
+                    placeholder="0"
                     value={hoursCourt1}
                     onChange={(e) => setHoursCourt1(e.target.value)}
                     style={{
@@ -1631,6 +1787,8 @@ export default function TorneoDetalle() {
                       type="number"
                       inputMode="decimal"
                       min="0"
+                    step="0.5"
+                    placeholder="0"
                       value={hoursCourt2}
                       onChange={(e) => setHoursCourt2(e.target.value)}
                       style={{
@@ -1645,38 +1803,244 @@ export default function TorneoDetalle() {
                 )}
               </div>
 
-              <label
+              <div
                 style={{
-                  fontSize: "0.78rem",
-                  color: "var(--muted)",
                   display: "flex",
                   flexDirection: "column",
-                  gap: "0.25rem",
+                  gap: "0.45rem",
                 }}
               >
-                Jugadores que pagan
-                <input
-                  type="number"
-                  min="1"
-                  value={playersPaying}
-                  onChange={(e) => setPlayersPaying(e.target.value)}
+                <div
                   style={{
-                    borderRadius: "0.7rem",
-                    border: "1px solid var(--border)",
-                    padding: "0.25rem 0.5rem",
-                    background: "var(--bg)",
-                    fontSize: "0.8rem",
-                  }}
-                />
-                <span
-                  style={{
-                    fontSize: "0.72rem",
-                    color: "var(--muted)",
+                    display: "flex",
+                    alignItems: "flex-start",
+                    justifyContent: "space-between",
+                    gap: "0.4rem",
                   }}
                 >
-                  Total de jugadores en el torneo: {stats?.totalPlayers || 0}
-                </span>
-              </label>
+                  <div>
+                    <p
+                      style={{
+                        margin: 0,
+                        fontSize: "0.78rem",
+                        color: "var(--muted)",
+                      }}
+                    >
+                      Jugadores y pago
+                    </p>
+                    <p
+                      style={{
+                        margin: 0,
+                        marginTop: "0.1rem",
+                        fontSize: "0.7rem",
+                        color: "var(--muted)",
+                      }}
+                    >
+                      Toca un jugador para exentarlo del pago.
+                    </p>
+                  </div>
+                  <div
+                    style={{
+                      fontSize: "0.72rem",
+                      color: "var(--muted)",
+                      textAlign: "right",
+                    }}
+                  >
+                    Pagan {payerCount} de {costPlayers.length}
+                  </div>
+                </div>
+
+                <div
+                  style={{
+                    display: "flex",
+                    flexWrap: "wrap",
+                    gap: "0.35rem",
+                  }}
+                >
+                  <button
+                    type="button"
+                    className="chip-button"
+                    onClick={() => setAllPayers(true)}
+                    disabled={!costPlayers.length}
+                    style={{
+                      padding: "0.22rem 0.7rem",
+                      fontSize: "0.72rem",
+                      opacity: costPlayers.length ? 1 : 0.6,
+                      cursor: costPlayers.length ? "pointer" : "default",
+                    }}
+                  >
+                    Todos pagan
+                  </button>
+                  <button
+                    type="button"
+                    className="chip-button subtle"
+                    onClick={() => setAllPayers(false)}
+                    disabled={!costPlayers.length}
+                    style={{
+                      padding: "0.22rem 0.7rem",
+                      fontSize: "0.72rem",
+                      opacity: costPlayers.length ? 1 : 0.6,
+                      cursor: costPlayers.length ? "pointer" : "default",
+                    }}
+                  >
+                    Exentar todos
+                  </button>
+                </div>
+
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "0.4rem",
+                    maxHeight: 220,
+                    overflowY: "auto",
+                    paddingRight: "0.2rem",
+                  }}
+                >
+                  {costPlayers.length === 0 && (
+                    <p
+                      style={{
+                        margin: 0,
+                        fontSize: "0.75rem",
+                        color: "var(--muted)",
+                      }}
+                    >
+                      No hay jugadores cargados aún.
+                    </p>
+                  )}
+                  {costPlayers.map((playerId) => {
+                    const isPaying = payerMap[playerId] !== false;
+                    const amountLabel =
+                      isPaying && costPerPlayer > 0
+                        ? costPerPlayer.toFixed(2)
+                        : "0.00";
+                    const photo = getPlayerPhoto(playerId);
+                    const hasPhoto = !!photo;
+                    return (
+                      <div
+                        key={playerId}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          gap: "0.5rem",
+                          padding: "0.35rem 0.45rem",
+                          borderRadius: "0.75rem",
+                          border: "1px solid var(--border)",
+                          background: isPaying
+                            ? "var(--bg)"
+                            : "rgba(148, 163, 184, 0.08)",
+                          transition:
+                            "background-color 0.2s ease, border-color 0.2s ease",
+                        }}
+                      >
+                        <div
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "0.5rem",
+                            minWidth: 0,
+                          }}
+                        >
+                          <div
+                            style={{
+                              width: 30,
+                              height: 30,
+                              borderRadius: "999px",
+                              overflow: "hidden",
+                              background: hasPhoto
+                                ? "var(--bg-elevated)"
+                                : "radial-gradient(circle at 30% 20%, #4084d6ff, #174ab8ff)",
+                              boxShadow: hasPhoto
+                                ? "0 4px 12px rgba(15, 23, 42, 0.18)"
+                                : "0 8px 20px rgba(37, 100, 235, 0.12)",
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              fontSize: "0.8rem",
+                              fontWeight: 600,
+                              color: "#ffffff",
+                              flexShrink: 0,
+                            }}
+                          >
+                            {hasPhoto ? (
+                              <img
+                                src={photo}
+                                alt={getPlayerName(playerId)}
+                                style={{
+                                  width: "100%",
+                                  height: "100%",
+                                  objectFit: "cover",
+                                }}
+                              />
+                            ) : (
+                              getPlayerInitial(playerId)
+                            )}
+                          </div>
+                          <div
+                            style={{
+                              minWidth: 0,
+                            }}
+                          >
+                            <p
+                              style={{
+                                margin: 0,
+                                fontSize: "0.8rem",
+                                fontWeight: 600,
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                                whiteSpace: "nowrap",
+                              }}
+                            >
+                              {getPlayerName(playerId)}
+                            </p>
+                            <p
+                              style={{
+                                margin: 0,
+                                marginTop: "0.1rem",
+                                fontSize: "0.68rem",
+                                color: "var(--muted)",
+                              }}
+                            >
+                              {isPaying ? "Paga" : "Exento (no paga)"}
+                            </p>
+                          </div>
+                        </div>
+                        <div
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "0.35rem",
+                          }}
+                        >
+                          <span
+                            style={{
+                              fontSize: "0.78rem",
+                              fontWeight: 600,
+                              color: isPaying
+                                ? "var(--fg)"
+                                : "var(--muted)",
+                            }}
+                          >
+                            ${amountLabel}
+                          </span>
+                          <button
+                            type="button"
+                            className={`chip-button${isPaying ? "" : " subtle"}`}
+                            onClick={() => togglePayer(playerId)}
+                            style={{
+                              padding: "0.2rem 0.6rem",
+                              fontSize: "0.7rem",
+                            }}
+                          >
+                            {isPaying ? "Paga" : "Exento"}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
             </div>
 
             <div
@@ -1687,6 +2051,15 @@ export default function TorneoDetalle() {
                 fontSize: "0.78rem",
               }}
             >
+              <p
+                style={{
+                  margin: 0,
+                  marginBottom: "0.15rem",
+                }}
+              >
+                Pagan: <strong>{payerCount}</strong> • Exentos:{" "}
+                <strong>{exemptCount}</strong>
+              </p>
               <p
                 style={{
                   margin: 0,
@@ -1720,6 +2093,18 @@ export default function TorneoDetalle() {
                     : "0.00"}
                 </strong>
               </p>
+              {totalCost > 0 && payerCount === 0 && (
+                <p
+                  style={{
+                    margin: 0,
+                    marginTop: "0.25rem",
+                    fontSize: "0.72rem",
+                    color: "#f59e0b",
+                  }}
+                >
+                  Marca al menos un jugador que pague para dividir el costo.
+                </p>
+              )}
             </div>
 
             <div
@@ -1732,13 +2117,10 @@ export default function TorneoDetalle() {
               <button
                 type="button"
                 onClick={() => setShowCostModal(false)}
+                className="chip-button"
                 style={{
-                  borderRadius: "999px",
-                  border: "1px solid var(--border)",
-                  padding: "0.35rem 0.8rem",
-                  background: "var(--bg)",
                   fontSize: "0.78rem",
-                  cursor: "pointer",
+                  padding: "0.35rem 0.8rem",
                 }}
               >
                 Cerrar

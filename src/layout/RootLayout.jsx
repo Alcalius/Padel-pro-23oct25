@@ -6,10 +6,12 @@ import Icon from "../components/common/Icon";
 import { db } from "../firebase/firebase";
 import { addDoc, collection } from "firebase/firestore";
 import AppIcon from "../assets/logo/AppIcon.png";
+import { useToast } from "../context/ToastContext";
 
 export default function RootLayout() {
   const auth = useAuth() || {};
-  const { user } = auth;
+  const { user, loading } = auth;
+  const { showToast } = useToast();
 
   const location = useLocation();
   const navigate = useNavigate();
@@ -63,10 +65,10 @@ export default function RootLayout() {
         email: user?.email || null,
         createdAt: new Date().toISOString(),
       });
-      alert("✅ Gracias, tu reporte se ha guardado.");
+      showToast("Gracias, tu reporte se ha guardado.", "success");
     } catch (err) {
       console.error("Error guardando feedback:", err);
-      alert("⚠️ No se pudo guardar el reporte. Intenta más tarde.");
+      showToast("No se pudo guardar el reporte. Intenta mas tarde.", "error");
     }
   };
 
@@ -74,10 +76,12 @@ export default function RootLayout() {
   // Proteger rutas: si no hay user y no estamos en /login
   // ─────────────────────────────
   useEffect(() => {
+    // Espera a que Firebase resuelva la sesión antes de redirigir
+    if (loading) return;
     if (!user && location.pathname !== "/login") {
       navigate("/login", { replace: true });
     }
-  }, [user, location.pathname, navigate]);
+  }, [user, loading, location.pathname, navigate]);
 
   const hideBottomNav = location.pathname === "/login";
 
@@ -105,7 +109,7 @@ export default function RootLayout() {
       <button
         type="button"
         onClick={onClick}
-        className={`bottom-item ${active ? "active" : ""}`}
+        className={`bottom-item pressable ${active ? "active" : ""}`}
         aria-label={ariaLabel || icon}
         title={ariaLabel || icon}
       >
@@ -119,6 +123,7 @@ export default function RootLayout() {
 
   return (
     <div
+      className="app-root"
       style={{
         minHeight: "100dvh",
         maxWidth: 480,
@@ -131,6 +136,7 @@ export default function RootLayout() {
     >
       {/* TOP BAR */}
       <header
+        className="app-header"
         style={{
           padding: "0.6rem 0.9rem",
           borderBottom: "1px solid var(--border)",
@@ -197,16 +203,11 @@ export default function RootLayout() {
               type="button"
               onClick={handleBugReport}
               title="Enviar reporte / feedback"
+              className="icon-button pressable"
               style={{
-                border: "none",
-                outline: "none",
-                borderRadius: "999px",
-                padding: "0.25rem 0.35rem",
-                background: "var(--bg)",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                cursor: "pointer",
               }}
             >
               <Icon name="bug" size={18} color="var(--fg)" />
@@ -227,16 +228,11 @@ export default function RootLayout() {
             <button
               type="button"
               onClick={toggleTheme}
+              className="icon-button pressable"
               style={{
-                border: "none",
-                outline: "none",
-                borderRadius: "999px",
-                padding: "0.25rem 0.4rem",
-                background: "var(--bg)",
                 display: "flex",
                 alignItems: "center",
                 gap: "0.35rem",
-                cursor: "pointer",
               }}
             >
               <Icon
@@ -259,6 +255,7 @@ export default function RootLayout() {
 
       {/* CONTENIDO */}
       <main
+        className="main-content"
         style={{
           flex: 1,
           padding:
@@ -266,7 +263,9 @@ export default function RootLayout() {
           overflowY: "auto",
         }}
       >
-        <Outlet />
+        <div key={location.pathname} className="page-transition">
+          <Outlet />
+        </div>
       </main>
 
       {/* BOTTOM NAV iOS-like con botón central */}
@@ -323,18 +322,17 @@ export default function RootLayout() {
               type="button"
               onClick={() => navigate("/torneos?create=1&fast=1")}
               title="Crear torneo"
+              className="btn btn-primary btn-glow pressable"
               style={{
                 width: 56,
                 height: 56,
                 borderRadius: 999,
                 border: "none",
-                background: "var(--accent)",
                 boxShadow: "0 12px 30px rgba(0,0,0,0.45)",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
                 transform: "translateY(-1px)",
-                cursor: "pointer",
                 flexShrink: 0,
               }}
             >

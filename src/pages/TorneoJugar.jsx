@@ -5,8 +5,24 @@ import { doc, getDoc, updateDoc, collection } from "firebase/firestore";
 import { db } from "../firebase/firebase";
 import Icon from "../components/common/Icon";
 import { applyMatchPLChanges, getDivisionIndex } from "../utils/ranking";
+import { useToast } from "../context/ToastContext";
 
 const TOTAL_POINTS = 4;
+const ATTENDANCE_STATUS = {
+  present: "present",
+  late: "late",
+  left: "left",
+};
+const ATTENDANCE_LABELS = {
+  present: "Presente",
+  late: "Tarde",
+  left: "Se fue",
+};
+const ATTENDANCE_COLORS = {
+  present: "#22c55e",
+  late: "#f59e0b",
+  left: "#ef4444",
+};
 
 // Helper para armar el mejor matchup con 4 jugadores
 function buildBestTeams(players4, existingTeams, existingMatchups, playersMap) {
@@ -69,11 +85,16 @@ function buildBestTeams(players4, existingTeams, existingMatchups, playersMap) {
 export default function TorneoJugar() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const { showToast } = useToast();
   const tournamentId = id;
 
   const [loading, setLoading] = useState(true);
   const [savingResult, setSavingResult] = useState(false);
   const [savingNewMatch, setSavingNewMatch] = useState(false);
+  const [savingAttendance, setSavingAttendance] = useState(false);
+  const [savingCourts, setSavingCourts] = useState(false);
+  const [initAttendanceDone, setInitAttendanceDone] = useState(false);
+  const [initCourtsDone, setInitCourtsDone] = useState(false);
 
   const [tournament, setTournament] = useState(null);
   const [matches, setMatches] = useState([]);
@@ -92,6 +113,8 @@ export default function TorneoJugar() {
     2: false,
   });
 
+  const [courtPulse, setCourtPulse] = useState({});
+
   // Partido personalizado
   const [showCustom, setShowCustom] = useState(false);
   const [customSelected, setCustomSelected] = useState([]);
@@ -102,6 +125,19 @@ export default function TorneoJugar() {
   // Modal conflicto jugadores en dos canchas
   const [conflictModal, setConflictModal] = useState(null);
   // conflictModal = { courtIndex, triedMatch, suggestedMatch, conflictPlayers }
+
+  const updateTournamentState = (patch) => {
+    setTournament((prev) => (prev ? { ...prev, ...patch } : prev));
+  };
+
+  const pulseCourt = (courtIndex) => {
+    if (!courtIndex) return;
+    setCourtPulse((prev) => ({ ...prev, [courtIndex]: true }));
+    setTimeout(
+      () => setCourtPulse((prev) => ({ ...prev, [courtIndex]: false })),
+      900
+    );
+  };
 
   // -----------------------------------
   // Normalizar nombres largos
@@ -246,14 +282,107 @@ export default function TorneoJugar() {
     load();
   }, [tournamentId]);
 
-// -----------------------------------
-// Derivados (sin hooks)
-// -----------------------------------
-const maxCourts =
-  tournament?.maxCourts ||
-  tournament?.courts ||
-  tournament?.activeCourts ||
-  1;
+  // -----------------------------------
+  // Inicializar asistencia y canchas activas (si no existen)
+  // -----------------------------------
+  useEffect(() => {
+    if (!tournament || initAttendanceDone) return;
+
+    const hasAttendance =
+      tournament.attendance &&
+      Object.keys(tournament.attendance || {}).length > 0;
+
+    if (hasAttendance) {
+      setInitAttendanceDone(true);
+      return;
+    }
+
+    const allIds = [
+      ...(Array.isArray(tournament.players) ? tournament.players : []),
+      ...(Array.isArray(tournament.guestPlayers)
+        ? tournament.guestPlayers.map((_, idx) => `guest-${idx}`)
+        : []),
+    ];
+
+    if (allIds.length === 0) {
+      setInitAttendanceDone(true);
+      return;
+    }
+
+    const nowIso = new Date().toISOString();
+    const initialAttendance = {};
+    allIds.forEach((pid) => {
+      initialAttendance[pid] = {
+        status: ATTENDANCE_STATUS.present,
+        updatedAt: nowIso,
+      };
+    });
+
+    updateDoc(doc(db, "tournaments", tournamentId), {
+      attendance: initialAttendance,
+    })
+      .catch((err) => {
+        console.error("Error inicializando asistencia:", err);
+      })
+      .finally(() => setInitAttendanceDone(true));
+  }, [tournament, tournamentId, initAttendanceDone]);
+
+  useEffect(() => {
+    if (!tournament || initCourtsDone) return;
+
+    if (typeof tournament.activeCourts === "number") {
+      setInitCourtsDone(true);
+      return;
+    }
+
+    const max =
+      tournament.maxCourts ||
+      tournament.courts ||
+      1;
+
+    updateDoc(doc(db, "tournaments", tournamentId), {
+      activeCourts: max,
+    })
+      .catch((err) => {
+        console.error("Error inicializando canchas activas:", err);
+      })
+      .finally(() => setInitCourtsDone(true));
+  }, [tournament, tournamentId, initCourtsDone]);
+
+  // -----------------------------------
+  // Derivados (sin hooks)
+  // -----------------------------------
+  const maxCourts =
+    tournament?.maxCourts ||
+    tournament?.courts ||
+    1;
+
+  const activeCourts = Math.max(
+    1,
+    Math.min(
+      typeof tournament?.activeCourts === "number"
+        ? tournament.activeCourts
+        : maxCourts,
+      maxCourts
+    )
+  );
+
+  const attendanceMap = tournament?.attendance || {};
+  const getAttendanceStatus = (pid) =>
+    attendanceMap[pid]?.status || ATTENDANCE_STATUS.present;
+  const isPlayerPresent = (pid) =>
+    getAttendanceStatus(pid) === ATTENDANCE_STATUS.present;
+
+  const allTournamentPlayers = tournament
+    ? [
+        ...(Array.isArray(tournament.players) ? tournament.players : []),
+        ...(Array.isArray(tournament.guestPlayers)
+          ? tournament.guestPlayers.map((_, idx) => `guest-${idx}`)
+          : []),
+      ]
+    : [];
+
+  const presentPlayers = allTournamentPlayers.filter(isPlayerPresent);
 
 // ----------------------------
 // Helpers: evitar repetidos en 2 canchas
@@ -295,12 +424,12 @@ const pendingMatches = matches.filter((m) => m.status === "pending");
 
 // 👉 Respetar el orden tal cual está guardado en el array
 const sortedPendingMatches =
-  maxCourts >= 2
+  activeCourts >= 2
     ? normalizeTopTwoPending([...pendingMatches])
     : [...pendingMatches];
 
 const matchCourt1 = sortedPendingMatches[0] || null;
-const matchCourt2 = maxCourts >= 2 ? sortedPendingMatches[1] || null : null;
+const matchCourt2 = activeCourts >= 2 ? sortedPendingMatches[1] || null : null;
 
 // Partidos realmente "pendientes" (no en cancha 1/2)
 const displayPendingMatches = sortedPendingMatches.filter(
@@ -312,13 +441,6 @@ const displayPendingMatches = sortedPendingMatches.filter(
 // Jugadores en espera (no en cancha 1 ni 2)
 let waitingPlayers = [];
 if (tournament) {
-  const allIds = [
-    ...(Array.isArray(tournament.players) ? tournament.players : []),
-    ...(Array.isArray(tournament.guestPlayers)
-      ? tournament.guestPlayers.map((_, idx) => `guest-${idx}`)
-      : []),
-  ];
-
   const inCourts = new Set();
   if (matchCourt1) {
     (matchCourt1.team1 || []).forEach((id) => inCourts.add(id));
@@ -329,18 +451,55 @@ if (tournament) {
     (matchCourt2.team2 || []).forEach((id) => inCourts.add(id));
   }
 
-  waitingPlayers = allIds.filter((id) => !inCourts.has(id));
+  waitingPlayers = presentPlayers.filter((id) => !inCourts.has(id));
 }
 
-const allTournamentPlayers = tournament
-  ? [
-      ...(Array.isArray(tournament.players) ? tournament.players : []),
-      ...(Array.isArray(tournament.guestPlayers)
-        ? tournament.guestPlayers.map((_, idx) => `guest-${idx}`)
-        : []),
-    ]
-  : [];
+  useEffect(() => {
+    if (!tournament || !matches.length) return;
+    if (savingNewMatch || reorderingPending) return;
 
+    const presentSet = new Set(presentPlayers);
+    const protectedIds = new Set(
+      [matchCourt1?.id, matchCourt2?.id].filter(Boolean)
+    );
+
+    const pending = matches.filter((m) => m.status === "pending");
+    const cleanedPending = pending.filter((m) => {
+      if (protectedIds.has(m.id)) return true;
+      return getMatchPlayers(m).every((pid) => presentSet.has(pid));
+    });
+
+    if (cleanedPending.length === pending.length) return;
+
+    const nonPending = matches.filter((m) => m.status !== "pending");
+    const updatedMatches = [...nonPending, ...cleanedPending];
+
+    updateDoc(doc(db, "tournaments", tournamentId), {
+      matches: updatedMatches,
+    })
+      .then(() => setMatches(updatedMatches))
+      .catch((err) => {
+        console.error("Error limpiando pendientes por asistencia:", err);
+      });
+  }, [
+    presentPlayers,
+    matchCourt1?.id,
+    matchCourt2?.id,
+    savingNewMatch,
+    reorderingPending,
+    tournament,
+    matches,
+    tournamentId,
+  ]);
+
+  useEffect(() => {
+    if (!customSelected.length) return;
+    const presentSet = new Set(presentPlayers);
+    const filtered = customSelected.filter((pid) => presentSet.has(pid));
+    if (filtered.length !== customSelected.length) {
+      setCustomSelected(filtered);
+    }
+  }, [presentPlayers, customSelected]);
 
   // -----------------------------------
   // Sincronizar marcadores cuando cambian partidos en cancha
@@ -421,10 +580,140 @@ const allTournamentPlayers = tournament
     }));
   };
 
+  const applyPlayerUpdates = (baseMap, plUpdates, statsUpdates) => {
+    const nextMap = { ...baseMap };
+    Object.entries(plUpdates || {}).forEach(([uid, upd]) => {
+      if (!nextMap[uid]) return;
+      const current = nextMap[uid];
+      nextMap[uid] = {
+        ...current,
+        rank: upd.newRank,
+        leaguePoints: upd.newPL,
+        stats: statsUpdates?.[uid] || current.stats,
+      };
+    });
+    return nextMap;
+  };
+
+  const updateUsersForMatchResult = async ({
+    match,
+    scoreTeam1,
+    scoreTeam2,
+    playersSnapshot,
+  }) => {
+    if (!match) return { plUpdates: {}, statsUpdates: {} };
+    if (match.status === "completed") return { plUpdates: {}, statsUpdates: {} };
+
+    const team1 = match.team1 || [];
+    const team2 = match.team2 || [];
+
+    let winner = 0;
+    if (scoreTeam1 > scoreTeam2) winner = 1;
+    else if (scoreTeam2 > scoreTeam1) winner = 2;
+
+    const isRealUser = (id) => !id.startsWith("guest-");
+    const plUpdates = {};
+
+    applyMatchPLChanges({
+      team1,
+      team2,
+      winner,
+      getUserRank: (userId) => {
+        if (userId.startsWith("guest-")) {
+          return { rank: "Bronce III", leaguePoints: 0 };
+        }
+        const p = playersSnapshot[userId];
+        if (!p) {
+          return { rank: "Bronce III", leaguePoints: 0 };
+        }
+        return {
+          rank: p.rank || "Bronce III",
+          leaguePoints: p.leaguePoints || 0,
+        };
+      },
+      onUpdate: (userId, newRank, newPL, delta) => {
+        if (!isRealUser(userId)) return;
+        plUpdates[userId] = {
+          newRank,
+          newPL,
+          delta,
+        };
+      },
+    });
+
+    const statsUpdates = {};
+
+    const userUpdatesPromises = Object.entries(plUpdates).map(
+      async ([uid, upd]) => {
+        const current = playersSnapshot[uid];
+        if (!current) return;
+
+        const resultForPlayer = (() => {
+          if (winner === 0) return "draw";
+          const winningTeam = winner === 1 ? team1 : team2;
+          return winningTeam.includes(uid) ? "win" : "loss";
+        })();
+
+        const scoreLabel = `${scoreTeam1} - ${scoreTeam2}`;
+
+        const oldStats = current.stats || {
+          totalMatches: 0,
+          wins: 0,
+          losses: 0,
+          tournamentsPlayed: 0,
+          tournamentsWon: 0,
+          streak: 0,
+          recentMatches: [],
+          achievements: [],
+        };
+
+        const newStats = { ...oldStats };
+        newStats.totalMatches = (newStats.totalMatches || 0) + 1;
+
+        if (resultForPlayer === "win") {
+          newStats.wins = (newStats.wins || 0) + 1;
+          newStats.streak = (newStats.streak || 0) + 1;
+        } else if (resultForPlayer === "loss") {
+          newStats.losses = (newStats.losses || 0) + 1;
+          newStats.streak = 0;
+        } else {
+          newStats.streak = 0;
+        }
+
+        const recent = Array.isArray(newStats.recentMatches)
+          ? [...newStats.recentMatches]
+          : [];
+
+        recent.unshift({
+          tournamentId,
+          tournamentName: tournament?.name || "Torneo",
+          result: resultForPlayer,
+          score: scoreLabel,
+          date: new Date().toISOString(),
+          plDelta: upd.delta,
+        });
+
+        newStats.recentMatches = recent;
+        statsUpdates[uid] = newStats;
+
+        const uRef = doc(db, "users", uid);
+        await updateDoc(uRef, {
+          rank: upd.newRank,
+          leaguePoints: upd.newPL,
+          stats: newStats,
+        });
+      }
+    );
+
+    await Promise.all(userUpdatesPromises);
+
+    return { plUpdates, statsUpdates };
+  };
+
   // -----------------------------------
   // Guardar resultado para una cancha
   // -----------------------------------
-  const saveMatchResult = async (match, num1, num2) => {
+  const saveMatchResult = async (match, num1, num2, courtIndex) => {
     if (!match) return;
 
     if (
@@ -433,21 +722,20 @@ const allTournamentPlayers = tournament
       Number.isNaN(num1) ||
       Number.isNaN(num2)
     ) {
-      alert("Ingresa un marcador válido para ambos equipos.");
+      showToast("Ingresa un marcador válido para ambos equipos.", "warning");
       return;
     }
     if (num1 < 0 || num2 < 0 || num1 > 4 || num2 > 4) {
-      alert("El marcador debe estar entre 0 y 4.");
+      showToast("El marcador debe estar entre 0 y 4.", "warning");
       return;
     }
     if (num1 + num2 !== TOTAL_POINTS) {
-      alert("En este formato, la suma de puntos siempre debe ser 4.");
+      showToast(
+        "En este formato, la suma de puntos siempre debe ser 4.",
+        "warning"
+      );
       return;
     }
-
-    let winner = 0;
-    if (num1 > num2) winner = 1;
-    else if (num2 > num1) winner = 2;
 
     setSavingResult(true);
 
@@ -464,130 +752,31 @@ const allTournamentPlayers = tournament
           : m
       );
 
-      const team1 = match.team1 || [];
-      const team2 = match.team2 || [];
-
-      const isRealUser = (id) => !id.startsWith("guest-");
-
-      const plUpdates = {};
-
-      applyMatchPLChanges({
-        team1,
-        team2,
-        winner,
-        getUserRank: (userId) => {
-          if (userId.startsWith("guest-")) {
-            return { rank: "Bronce III", leaguePoints: 0 };
-          }
-          const p = playersMap[userId];
-          if (!p) {
-            return { rank: "Bronce III", leaguePoints: 0 };
-          }
-          return {
-            rank: p.rank || "Bronce III",
-            leaguePoints: p.leaguePoints || 0,
-          };
-        },
-        onUpdate: (userId, newRank, newPL, delta) => {
-          if (!isRealUser(userId)) return;
-          plUpdates[userId] = {
-            newRank,
-            newPL,
-            delta,
-          };
-        },
-      });
-
       const tRef = doc(db, "tournaments", tournamentId);
 
-      const userUpdatesPromises = Object.entries(plUpdates).map(
-        async ([uid, upd]) => {
-          const current = playersMap[uid];
-          if (!current) return;
-
-          const resultForPlayer = (() => {
-            if (winner === 0) return "draw";
-            const winningTeam = winner === 1 ? team1 : team2;
-            return winningTeam.includes(uid) ? "win" : "loss";
-          })();
-
-          const scoreLabel = `${num1} - ${num2}`;
-
-          const oldStats = current.stats || {
-            totalMatches: 0,
-            wins: 0,
-            losses: 0,
-            tournamentsPlayed: 0,
-            tournamentsWon: 0,
-            streak: 0,
-            recentMatches: [],
-            achievements: [],
-          };
-
-          const newStats = { ...oldStats };
-          newStats.totalMatches = (newStats.totalMatches || 0) + 1;
-
-          if (resultForPlayer === "win") {
-            newStats.wins = (newStats.wins || 0) + 1;
-            newStats.streak = (newStats.streak || 0) + 1;
-          } else if (resultForPlayer === "loss") {
-            newStats.losses = (newStats.losses || 0) + 1;
-            newStats.streak = 0;
-          } else {
-            newStats.streak = 0;
-          }
-
-          const recent = Array.isArray(newStats.recentMatches)
-            ? [...newStats.recentMatches]
-            : [];
-
-          recent.unshift({
-            tournamentId,
-            tournamentName: tournament?.name || "Torneo",
-            result: resultForPlayer,
-            score: scoreLabel,
-            date: new Date().toISOString(),
-            plDelta: upd.delta,
-          });
-
-          if (recent.length > 20) {
-            recent.length = 20;
-          }
-
-          newStats.recentMatches = recent;
-
-          const uRef = doc(db, "users", uid);
-          await updateDoc(uRef, {
-            rank: upd.newRank,
-            leaguePoints: upd.newPL,
-            stats: newStats,
-          });
-        }
-      );
-
-      await Promise.all([
-        updateDoc(tRef, { matches: updatedMatches }),
-        ...userUpdatesPromises,
-      ]);
+      await updateDoc(tRef, { matches: updatedMatches });
 
       setMatches(updatedMatches);
 
-      const newPlayersMap = { ...playersMap };
-      Object.entries(plUpdates).forEach(([uid, upd]) => {
-        if (!newPlayersMap[uid]) return;
-        const current = newPlayersMap[uid];
-        newPlayersMap[uid] = {
-          ...current,
-          rank: upd.newRank,
-          leaguePoints: upd.newPL,
-        };
+      const { plUpdates, statsUpdates } = await updateUsersForMatchResult({
+        match,
+        scoreTeam1: num1,
+        scoreTeam2: num2,
+        playersSnapshot: playersMap,
       });
-      setPlayersMap(newPlayersMap);
 
-      alert("Marcador guardado.");
+      const newPlayersMap = applyPlayerUpdates(
+        playersMap,
+        plUpdates,
+        statsUpdates
+      );
+      setPlayersMap(newPlayersMap);
+      pulseCourt(courtIndex);
+
+      showToast("Marcador guardado.", "success");
     } catch (err) {
       console.error("Error guardando resultado:", err);
-      alert("No se pudo guardar el resultado.");
+      showToast("No se pudo guardar el resultado.", "error");
     } finally {
       setSavingResult(false);
     }
@@ -597,14 +786,19 @@ const allTournamentPlayers = tournament
     const match = courtIndex === 1 ? matchCourt1 : matchCourt2;
     if (!match) return;
     const courtScores = scores[courtIndex] || { team1: 0, team2: 0 };
-    await saveMatchResult(match, courtScores.team1, courtScores.team2);
+    await saveMatchResult(
+      match,
+      courtScores.team1,
+      courtScores.team2,
+      courtIndex
+    );
   };
 
 const handleSaveBothCourtsResults = async () => {
-  if (maxCourts < 2 || !matchCourt1 || !matchCourt2) return;
+  if (activeCourts < 2 || !matchCourt1 || !matchCourt2) return;
 
   if (!scoreTouched[1] || !scoreTouched[2]) {
-    alert("Primero captura el marcador de ambas canchas.");
+    showToast("Primero captura el marcador de ambas canchas.", "warning");
     return;
   }
 
@@ -620,8 +814,61 @@ const handleSaveBothCourtsResults = async () => {
     return true;
   };
 
+  // -----------------------------------
+  // Asistencia y canchas activas
+  // -----------------------------------
+  const handleSetAttendance = async (playerId, status) => {
+    if (!tournament) return;
+    const current = tournament.attendance || {};
+    const prev = current[playerId]?.status || ATTENDANCE_STATUS.present;
+    if (prev === status) return;
+
+    const next = {
+      ...current,
+      [playerId]: {
+        status,
+        updatedAt: new Date().toISOString(),
+      },
+    };
+
+    setSavingAttendance(true);
+    try {
+      await updateDoc(doc(db, "tournaments", tournamentId), {
+        attendance: next,
+      });
+      updateTournamentState({ attendance: next });
+    } catch (err) {
+      console.error("Error actualizando asistencia:", err);
+      showToast("No se pudo actualizar la asistencia.", "error");
+    } finally {
+      setSavingAttendance(false);
+    }
+  };
+
+  const handleSetActiveCourts = async (count) => {
+    if (!tournament) return;
+    const desired = Math.max(1, Math.min(count, maxCourts));
+    if (desired === activeCourts) return;
+
+    setSavingCourts(true);
+    try {
+      await updateDoc(doc(db, "tournaments", tournamentId), {
+        activeCourts: desired,
+      });
+      updateTournamentState({ activeCourts: desired });
+    } catch (err) {
+      console.error("Error actualizando canchas activas:", err);
+      showToast("No se pudo actualizar las canchas activas.", "error");
+    } finally {
+      setSavingCourts(false);
+    }
+  };
+
   if (!isValidScore(s1.team1, s1.team2) || !isValidScore(s2.team1, s2.team2)) {
-    alert("Revisa los marcadores. Deben sumar 4 y estar entre 0 y 4.");
+    showToast(
+      "Revisa los marcadores. Deben sumar 4 y estar entre 0 y 4.",
+      "warning"
+    );
     return;
   }
 
@@ -662,7 +909,7 @@ const handleSaveBothCourtsResults = async () => {
     // (Opcional) Luego ya normalizamos la siguiente tanda con el estado actualizado
     try {
       const pendingAfter = updatedMatches.filter((m) => m.status === "pending");
-      const normalized = maxCourts >= 2 ? normalizeTopTwoPending(pendingAfter) : pendingAfter;
+      const normalized = activeCourts >= 2 ? normalizeTopTwoPending(pendingAfter) : pendingAfter;
 
       const changed =
         normalized.length === pendingAfter.length &&
@@ -684,12 +931,41 @@ const handleSaveBothCourtsResults = async () => {
       console.warn("No se pudo normalizar la siguiente tanda:", e);
     }
 
-    alert("Marcadores guardados (ambas canchas).");
+    let nextPlayersMap = { ...playersMap };
+    const firstUpdate = await updateUsersForMatchResult({
+      match: matchCourt1,
+      scoreTeam1: s1.team1,
+      scoreTeam2: s1.team2,
+      playersSnapshot: nextPlayersMap,
+    });
+    nextPlayersMap = applyPlayerUpdates(
+      nextPlayersMap,
+      firstUpdate.plUpdates,
+      firstUpdate.statsUpdates
+    );
+
+    const secondUpdate = await updateUsersForMatchResult({
+      match: matchCourt2,
+      scoreTeam1: s2.team1,
+      scoreTeam2: s2.team2,
+      playersSnapshot: nextPlayersMap,
+    });
+    nextPlayersMap = applyPlayerUpdates(
+      nextPlayersMap,
+      secondUpdate.plUpdates,
+      secondUpdate.statsUpdates
+    );
+
+    setPlayersMap(nextPlayersMap);
+    pulseCourt(1);
+    pulseCourt(2);
+
+    showToast("Marcadores guardados (ambas canchas).", "success");
 
     setScoreTouched({ 1: false, 2: false });
   } catch (err) {
     console.error("Error guardando ambos resultados:", err);
-    alert("No se pudieron guardar ambos resultados.");
+    showToast("No se pudieron guardar ambos resultados.", "error");
   } finally {
     setSavingResult(false);
   }
@@ -704,7 +980,7 @@ const handleSaveBothCourtsResults = async () => {
     const match = matches.find((m) => m.id === matchId);
     if (!match) return;
     if (match.status !== "pending") {
-      alert("Solo puedes eliminar partidos pendientes.");
+      showToast("Solo puedes eliminar partidos pendientes.", "warning");
       return;
     }
     if (!window.confirm("¿Eliminar este partido pendiente?")) return;
@@ -718,7 +994,7 @@ const handleSaveBothCourtsResults = async () => {
       setMatches(updated);
     } catch (err) {
       console.error("Error eliminando partido:", err);
-      alert("No se pudo eliminar el partido.");
+      showToast("No se pudo eliminar el partido.", "error");
     }
   };
 
@@ -741,7 +1017,7 @@ const handleSaveBothCourtsResults = async () => {
         setMatches(updatedMatches);
       } catch (err) {
         console.error("Error reacomodando partidos pendientes:", err);
-        alert("No se pudo reacomodar el orden de los partidos.");
+        showToast("No se pudo reacomodar el orden de los partidos.", "error");
       } finally {
         setReorderingPending(false);
       }
@@ -754,7 +1030,7 @@ const handleSaveBothCourtsResults = async () => {
     const indexInSorted = list.findIndex((m) => m.id === matchId);
     if (indexInSorted === -1) return;
 
-    const pinnedCount = maxCourts >= 1 ? maxCourts : 0; // índices 0..pinnedCount-1 son las canchas
+    const pinnedCount = activeCourts >= 1 ? activeCourts : 0; // índices 0..pinnedCount-1 son las canchas
     const isLast = indexInSorted >= list.length - 1;
 
     if (direction === "up") {
@@ -775,158 +1051,416 @@ const handleSaveBothCourtsResults = async () => {
   };
 
   // -----------------------------------
-  // Generar partido inteligente (global)
+  // Scheduler dinámico (rondas)
   // -----------------------------------
-  const getPlayerMatchCount = (playerId) => {
-    let count = 0;
-    matches.forEach((m) => {
-      if (m.status !== "completed" && m.status !== "pending") return;
-      const involved = [...(m.team1 || []), ...(m.team2 || [])];
-      if (involved.includes(playerId)) count++;
-    });
-    return count;
-  };
+  const pairKey = (a, b) => (a < b ? `${a}|${b}` : `${b}|${a}`);
 
-  const generateSmartMatchInternal = async () => {
-    if (!tournament) return;
-    const allIds = [
-      ...(Array.isArray(tournament.players) ? tournament.players : []),
-      ...(Array.isArray(tournament.guestPlayers)
-        ? tournament.guestPlayers.map((_, idx) => `guest-${idx}`)
-        : []),
-    ];
-    if (allIds.length < 4) {
-      alert("Se necesitan al menos 4 jugadores para crear un partido.");
-      return;
-    }
-
+  const buildMatchHistoryStats = (historyMatches) => {
+    const teammateCounts = {};
+    const opponentCounts = {};
+    const matchCounts = {};
     const existingTeams = new Set();
     const existingMatchups = new Set();
+    const lastPlayedIndex = {};
+    let completedCount = 0;
 
-    const teamKeyLocal = (team) => [...team].sort().join("|");
-    const matchupKeyLocal = (teamA, teamB) => {
-      const ta = teamKeyLocal(teamA);
-      const tb = teamKeyLocal(teamB);
+    const addTeammates = (team) => {
+      for (let i = 0; i < team.length; i++) {
+        for (let j = i + 1; j < team.length; j++) {
+          const key = pairKey(team[i], team[j]);
+          teammateCounts[key] = (teammateCounts[key] || 0) + 1;
+        }
+      }
+    };
+
+    const addOpponents = (team1, team2) => {
+      for (const a of team1) {
+        for (const b of team2) {
+          const key = pairKey(a, b);
+          opponentCounts[key] = (opponentCounts[key] || 0) + 1;
+        }
+      }
+    };
+
+    const teamKey = (team) => [...team].sort().join("|");
+    const matchupKey = (teamA, teamB) => {
+      const ta = teamKey(teamA);
+      const tb = teamKey(teamB);
       return ta < tb ? `${ta}::${tb}` : `${tb}::${ta}`;
     };
 
-    matches.forEach((m) => {
+    (historyMatches || []).forEach((m) => {
+      if (m.status !== "completed" && m.status !== "pending") return;
       const t1 = m.team1 || [];
       const t2 = m.team2 || [];
-      if (t1.length === 2) existingTeams.add(teamKeyLocal(t1));
-      if (t2.length === 2) existingTeams.add(teamKeyLocal(t2));
+      const players = [...t1, ...t2];
+
+      if (t1.length === 2) existingTeams.add(teamKey(t1));
+      if (t2.length === 2) existingTeams.add(teamKey(t2));
       if (t1.length === 2 && t2.length === 2) {
-        existingMatchups.add(matchupKeyLocal(t1, t2));
+        existingMatchups.add(matchupKey(t1, t2));
+        addTeammates(t1);
+        addTeammates(t2);
+        addOpponents(t1, t2);
+      }
+
+      players.forEach((pid) => {
+        matchCounts[pid] = (matchCounts[pid] || 0) + 1;
+      });
+
+      if (m.status === "completed") {
+        players.forEach((pid) => {
+          lastPlayedIndex[pid] = completedCount;
+        });
+        completedCount += 1;
       }
     });
 
-      const sorted = [...allIds].sort((a, b) => {
-        const ca = getPlayerMatchCount(a);
-        const cb = getPlayerMatchCount(b);
-        if (ca !== cb) return ca - cb;
-        const ia = getDivisionIndex(playersMap[a]?.rank || "Bronce III");
-        const ib = getDivisionIndex(playersMap[b]?.rank || "Bronce III");
-        return ia - ib;
-      });
+    return {
+      teammateCounts,
+      opponentCounts,
+      matchCounts,
+      existingTeams,
+      existingMatchups,
+      lastPlayedIndex,
+      completedCount,
+    };
+  };
 
-      const now = Date.now();
-      let newMatches = [...matches];
+  const getRankIndex = (pid) =>
+    getDivisionIndex(playersMap[pid]?.rank || "Bronce III");
 
-      if (maxCourts >= 2 && sorted.length >= 8) {
-        // 👉 2 canchas: tomamos a los 8 que menos han jugado
-        const base8 = sorted.slice(0, 8);
+  const buildCandidateMatches = (pool, stats, minMatchCount) => {
+    const candidates = [];
+    if (!pool || pool.length < 4) return candidates;
 
-        // Mezclamos un poco esos 8 para evitar bloques fijos
-        const shuffled8 = [...base8].sort(() => Math.random() - 0.5);
+    const recentPenaltyFor = (pid) => {
+      if (!stats.completedCount) return 0;
+      const lastIdx = stats.lastPlayedIndex[pid];
+      if (lastIdx == null) return 0;
+      if (lastIdx >= stats.completedCount - 1) return 2;
+      if (lastIdx >= stats.completedCount - 2) return 1;
+      return 0;
+    };
 
-        const group1 = shuffled8.slice(0, 4);
-        const group2 = shuffled8.slice(4, 8);
+    const teamKey = (team) => [...team].sort().join("|");
+    const matchupKey = (teamA, teamB) => {
+      const ta = teamKey(teamA);
+      const tb = teamKey(teamB);
+      return ta < tb ? `${ta}::${tb}` : `${tb}::${ta}`;
+    };
 
-        const best1 = buildBestTeams(
-          group1,
-          existingTeams,
-          existingMatchups,
-          playersMap
-        );
-        const best2 = buildBestTeams(
-          group2,
-          existingTeams,
-          existingMatchups,
-          playersMap
-        );
+    for (let i = 0; i < pool.length - 3; i++) {
+      for (let j = i + 1; j < pool.length - 2; j++) {
+        for (let k = j + 1; k < pool.length - 1; k++) {
+          for (let l = k + 1; l < pool.length; l++) {
+            const group = [pool[i], pool[j], pool[k], pool[l]];
 
-        const newMatch1 = {
-          id: `match-${now}-${Math.random().toString(36).slice(2, 6)}`,
-          team1: best1.team1,
-          team2: best1.team2,
-          scoreTeam1: null,
-          scoreTeam2: null,
-          status: "pending",
-          createdAt: new Date(now).toISOString(),
-          type: "smart",
-        };
+            const matchCountPenalty = group.reduce(
+              (sum, pid) =>
+                sum + Math.max(0, (stats.matchCounts[pid] || 0) - minMatchCount),
+              0
+            );
+            const restPenalty = group.reduce(
+              (sum, pid) => sum + recentPenaltyFor(pid),
+              0
+            );
+            const basePenalty = matchCountPenalty * 3 + restPenalty * 2;
 
-        const newMatch2 = {
-          id: `match-${now + 1}-${Math.random().toString(36).slice(2, 6)}`,
-          team1: best2.team1,
-          team2: best2.team2,
-          scoreTeam1: null,
-          scoreTeam2: null,
-          status: "pending",
-          createdAt: new Date(now + 1).toISOString(),
-          type: "smart",
-        };
+            const [a, b, c, d] = group;
+            const combos = [
+              { team1: [a, b], team2: [c, d] },
+              { team1: [a, c], team2: [b, d] },
+              { team1: [a, d], team2: [b, c] },
+            ];
 
-        newMatches = [...matches, newMatch1, newMatch2];
-      } else {
-        // 👉 1 cancha: tomamos un pool de hasta 6 y mezclamos
-        const candidateCount = Math.min(sorted.length, 6);
-        const pool = sorted.slice(0, candidateCount);
-        const shuffled = [...pool].sort(() => Math.random() - 0.5);
-        const base4 = shuffled.slice(0, 4);
+            let best = null;
+            let bestCost = Infinity;
 
-        const best = buildBestTeams(
-          base4,
-          existingTeams,
-          existingMatchups,
-          playersMap
-        );
+            combos.forEach((combo) => {
+              const t1Key = teamKey(combo.team1);
+              const t2Key = teamKey(combo.team2);
+              const muKey = matchupKey(combo.team1, combo.team2);
 
-        const newMatch = {
-          id: `match-${now}-${Math.random().toString(36).slice(2, 8)}`,
-          team1: best.team1,
-          team2: best.team2,
-          scoreTeam1: null,
-          scoreTeam2: null,
-          status: "pending",
-          createdAt: new Date(now).toISOString(),
-          type: "smart",
-        };
+              const teamPenalty =
+                (stats.existingTeams.has(t1Key) ? 1 : 0) +
+                (stats.existingTeams.has(t2Key) ? 1 : 0);
+              const matchupPenalty = stats.existingMatchups.has(muKey) ? 1 : 0;
 
-        newMatches = [...matches, newMatch];
+              let repeatTeammatePenalty = 0;
+              for (let ti = 0; ti < combo.team1.length; ti++) {
+                for (let tj = ti + 1; tj < combo.team1.length; tj++) {
+                  const key = pairKey(combo.team1[ti], combo.team1[tj]);
+                  repeatTeammatePenalty += stats.teammateCounts[key] || 0;
+                }
+              }
+              for (let ti = 0; ti < combo.team2.length; ti++) {
+                for (let tj = ti + 1; tj < combo.team2.length; tj++) {
+                  const key = pairKey(combo.team2[ti], combo.team2[tj]);
+                  repeatTeammatePenalty += stats.teammateCounts[key] || 0;
+                }
+              }
+
+              let repeatOpponentPenalty = 0;
+              combo.team1.forEach((p1) => {
+                combo.team2.forEach((p2) => {
+                  const key = pairKey(p1, p2);
+                  repeatOpponentPenalty += stats.opponentCounts[key] || 0;
+                });
+              });
+
+              const balancePenalty = Math.abs(
+                combo.team1.reduce((sum, pid) => sum + getRankIndex(pid), 0) /
+                  combo.team1.length -
+                  combo.team2.reduce((sum, pid) => sum + getRankIndex(pid), 0) /
+                    combo.team2.length
+              );
+
+              const cost =
+                basePenalty +
+                teamPenalty * 6 +
+                matchupPenalty * 10 +
+                repeatTeammatePenalty * 4 +
+                repeatOpponentPenalty * 2 +
+                balancePenalty * 2;
+
+              if (cost < bestCost) {
+                bestCost = cost;
+                best = {
+                  team1: combo.team1,
+                  team2: combo.team2,
+                  cost,
+                  players: group,
+                };
+              }
+            });
+
+            if (best) {
+              candidates.push(best);
+            }
+          }
+        }
       }
+    }
+
+    return candidates.sort((a, b) => a.cost - b.cost);
+  };
+
+  const applyGeneratedMatchToStats = (stats, match) => {
+    const t1 = match.team1 || [];
+    const t2 = match.team2 || [];
+    const teamKey = (team) => [...team].sort().join("|");
+    const matchupKey = (teamA, teamB) => {
+      const ta = teamKey(teamA);
+      const tb = teamKey(teamB);
+      return ta < tb ? `${ta}::${tb}` : `${tb}::${ta}`;
+    };
+
+    if (t1.length === 2) stats.existingTeams.add(teamKey(t1));
+    if (t2.length === 2) stats.existingTeams.add(teamKey(t2));
+    if (t1.length === 2 && t2.length === 2) {
+      stats.existingMatchups.add(matchupKey(t1, t2));
+    }
+
+    [...t1, ...t2].forEach((pid) => {
+      stats.matchCounts[pid] = (stats.matchCounts[pid] || 0) + 1;
+    });
+
+    for (let i = 0; i < t1.length; i++) {
+      for (let j = i + 1; j < t1.length; j++) {
+        const key = pairKey(t1[i], t1[j]);
+        stats.teammateCounts[key] = (stats.teammateCounts[key] || 0) + 1;
+      }
+    }
+    for (let i = 0; i < t2.length; i++) {
+      for (let j = i + 1; j < t2.length; j++) {
+        const key = pairKey(t2[i], t2[j]);
+        stats.teammateCounts[key] = (stats.teammateCounts[key] || 0) + 1;
+      }
+    }
+    t1.forEach((p1) => {
+      t2.forEach((p2) => {
+        const key = pairKey(p1, p2);
+        stats.opponentCounts[key] = (stats.opponentCounts[key] || 0) + 1;
+      });
+    });
+  };
+
+  const pickBestMatchFromPool = (availablePlayers, stats, minMatchCount, poolHint) => {
+    if (availablePlayers.length < 4) return null;
+
+    const sorted = [...availablePlayers].sort((a, b) => {
+      const ca = stats.matchCounts[a] || 0;
+      const cb = stats.matchCounts[b] || 0;
+      if (ca !== cb) return ca - cb;
+      const la = stats.lastPlayedIndex[a] ?? -Infinity;
+      const lb = stats.lastPlayedIndex[b] ?? -Infinity;
+      if (la !== lb) return la - lb;
+      return getRankIndex(a) - getRankIndex(b);
+    });
+
+    const poolSize = Math.min(
+      sorted.length,
+      Math.max(poolHint || 8, 8)
+    );
+    const pool = sorted.slice(0, poolSize);
+    const candidates = buildCandidateMatches(pool, stats, minMatchCount);
+    return candidates[0] || null;
+  };
+
+  const generateAdaptiveMatches = ({
+    desiredMatches,
+    excludePlayers = [],
+    historyMatches = matches,
+  }) => {
+    const excludedSet = new Set(excludePlayers);
+    const availablePlayers = presentPlayers.filter(
+      (pid) => !excludedSet.has(pid)
+    );
+
+    const maxMatches = Math.min(
+      desiredMatches,
+      Math.floor(availablePlayers.length / 4)
+    );
+    if (maxMatches < 1) return [];
+
+    const stats = buildMatchHistoryStats(historyMatches);
+    const minMatchCount =
+      presentPlayers.length > 0
+        ? Math.min(
+            ...presentPlayers.map((pid) => stats.matchCounts[pid] || 0)
+          )
+        : 0;
+
+    let remaining = [...availablePlayers];
+    const roundMatches = [];
+
+    for (let i = 0; i < maxMatches; i++) {
+      const candidate = pickBestMatchFromPool(
+        remaining,
+        stats,
+        minMatchCount,
+        activeCourts * 8
+      );
+      if (!candidate) break;
+
+      const now = Date.now() + i;
+      const newMatch = {
+        id: `match-${now}-${Math.random().toString(36).slice(2, 8)}`,
+        team1: candidate.team1,
+        team2: candidate.team2,
+        scoreTeam1: null,
+        scoreTeam2: null,
+        status: "pending",
+        createdAt: new Date(now).toISOString(),
+        type: "dynamic",
+      };
+
+      roundMatches.push(newMatch);
+      applyGeneratedMatchToStats(stats, newMatch);
+
+      const used = new Set(candidate.players);
+      remaining = remaining.filter((pid) => !used.has(pid));
+    }
+
+    return roundMatches;
+  };
+
+  const buildBaseMatchesForScheduling = () => {
+    const keepIds = new Set(
+      [matchCourt1?.id, matchCourt2?.id].filter(Boolean)
+    );
+    const nonPending = matches.filter((m) => m.status !== "pending");
+    const keptPending = matches.filter(
+      (m) => m.status === "pending" && keepIds.has(m.id)
+    );
+    return [...nonPending, ...keptPending];
+  };
+
+  const generateNextRoundInternal = async ({
+    desiredMatches = activeCourts,
+    resetQueue = true,
+  } = {}) => {
+    if (!tournament) return;
+    if (tournament.status === "completed") {
+      showToast(
+        "El torneo está completado. No se pueden generar más partidos.",
+        "warning"
+      );
+      return;
+    }
+    if (presentPlayers.length < 4) {
+      showToast(
+        "Se necesitan al menos 4 jugadores presentes para crear partidos.",
+        "warning"
+      );
+      return;
+    }
+
+    const inCourts = new Set();
+    if (matchCourt1) {
+      (matchCourt1.team1 || []).forEach((id) => inCourts.add(id));
+      (matchCourt1.team2 || []).forEach((id) => inCourts.add(id));
+    }
+    if (matchCourt2) {
+      (matchCourt2.team1 || []).forEach((id) => inCourts.add(id));
+      (matchCourt2.team2 || []).forEach((id) => inCourts.add(id));
+    }
+
+    const availablePlayers = presentPlayers.filter((pid) => !inCourts.has(pid));
+    const maxDesired = Math.min(
+      desiredMatches,
+      Math.floor(availablePlayers.length / 4)
+    );
+    if (maxDesired < 1) {
+      showToast("No hay suficientes jugadores disponibles para otra ronda.", "warning");
+      return;
+    }
+
+    const baseMatches = resetQueue ? buildBaseMatchesForScheduling() : matches;
+    const newRoundMatches = generateAdaptiveMatches({
+      desiredMatches: maxDesired,
+      excludePlayers: [...inCourts],
+      historyMatches: baseMatches,
+    });
+
+    if (!newRoundMatches.length) {
+      showToast(
+        "No se pudo generar una ronda válida con la asistencia actual.",
+        "error"
+      );
+      return;
+    }
+
+    const updatedMatches = resetQueue
+      ? [...baseMatches, ...newRoundMatches]
+      : [...matches, ...newRoundMatches];
 
     setSavingNewMatch(true);
     try {
       await updateDoc(doc(db, "tournaments", tournamentId), {
-        matches: newMatches,
+        matches: updatedMatches,
       });
-      setMatches(newMatches);
-      if (maxCourts >= 2 && sorted.length >= 8) {
-        alert("Se crearon 2 partidos inteligentes.");
+      setMatches(updatedMatches);
+      if (maxDesired > 1) {
+        showToast("Ronda generada.", "success");
       } else {
-        alert("Partido inteligente creado.");
+        showToast("Partido generado.", "success");
       }
     } catch (err) {
-      console.error("Error creando partido inteligente:", err);
-      alert("No se pudo crear el partido.");
+      console.error("Error creando ronda:", err);
+      showToast("No se pudo crear la ronda.", "error");
     } finally {
       setSavingNewMatch(false);
     }
   };
 
   const generateSmartMatch = () => {
-    generateSmartMatchInternal();
+    generateNextRoundInternal({ desiredMatches: activeCourts, resetQueue: true });
+  };
+
+  const generateSingleMatch = () => {
+    generateNextRoundInternal({ desiredMatches: 1, resetQueue: false });
   };
 
   // -----------------------------------
@@ -937,7 +1471,7 @@ const handleSaveBothCourtsResults = async () => {
     const target = sortedPendingMatches.find((m) => m.id === matchId);
     if (!target) return;
 
-    if (maxCourts >= 2) {
+    if (activeCourts >= 2) {
       const otherMatch = courtIndex === 1 ? matchCourt2 : matchCourt1;
       if (otherMatch) {
         const targetPlayers = new Set([
@@ -998,7 +1532,7 @@ const handleSaveBothCourtsResults = async () => {
 
     if (courtIndex === 1) {
       newOrder.push(target);
-      if (maxCourts >= 2 && current2 && current2.id !== matchId) {
+      if (activeCourts >= 2 && current2 && current2.id !== matchId) {
         newOrder.push(current2);
       }
       newOrder = newOrder.concat(others);
@@ -1040,7 +1574,7 @@ const handleSaveBothCourtsResults = async () => {
 
   const createCustomMatch = async () => {
     if (customSelected.length !== 4) {
-      alert("Selecciona exactamente 4 jugadores para crear un partido.");
+      showToast("Selecciona exactamente 4 jugadores para crear un partido.", "warning");
       return;
     }
 
@@ -1090,12 +1624,12 @@ const handleSaveBothCourtsResults = async () => {
         matches: newMatches,
       });
       setMatches(newMatches);
-      alert("Partido personalizado creado.");
+      showToast("Partido personalizado creado.", "success");
       setCustomSelected([]);
       setShowCustom(false);
     } catch (err) {
       console.error("Error creando partido personalizado:", err);
-      alert("No se pudo crear el partido.");
+      showToast("No se pudo crear el partido.", "error");
     } finally {
       setSavingNewMatch(false);
     }
@@ -1137,6 +1671,13 @@ const handleSaveBothCourtsResults = async () => {
   ).length;
   const pendingCount = pendingMatches.length;
   const isTournamentCompleted = tournament.status === "completed";
+  const totalPlayersCount = allTournamentPlayers.length;
+  const presentPlayersCount = presentPlayers.length;
+  const requiredPlayersForCourts = activeCourts * 4;
+  const missingPlayersForCourts = Math.max(
+    0,
+    requiredPlayersForCourts - presentPlayersCount
+  );
 
   // Preview partido personalizado (4 seleccionados)
   let customPreviewTeam1 = [];
@@ -1266,6 +1807,7 @@ const handleSaveBothCourtsResults = async () => {
 
     return (
       <div
+        className={`court-block ${courtPulse[courtIndex] ? "court-block--saved" : ""}`}
         style={{
           paddingTop: courtIndex === 1 ? "0.5rem" : "0.75rem",
           marginTop: courtIndex === 1 ? 0 : "0.75rem",
@@ -1402,7 +1944,7 @@ const handleSaveBothCourtsResults = async () => {
               >
                 {(() => {
                   const otherCourt = courtIndex === 1 ? 2 : 1;
-                  const twoCourtsActive = maxCourts >= 2 && matchCourt1 && matchCourt2;
+                  const twoCourtsActive = activeCourts >= 2 && matchCourt1 && matchCourt2;
                   const bothReady = scoreTouched[1] && scoreTouched[2];
 
                   return (
@@ -1416,6 +1958,7 @@ const handleSaveBothCourtsResults = async () => {
                         }
                       }}
                       disabled={savingResult || (twoCourtsActive && !bothReady)}
+                      className="btn btn-primary btn-glow pressable"
                       style={{
                         borderRadius: "0.9rem",
                         border: "none",
@@ -1517,7 +2060,7 @@ const handleSaveBothCourtsResults = async () => {
           >
             Partidos completados: <strong>{completedCount}</strong> • Pendientes:{" "}
             <strong>{pendingCount}</strong> •{" "}
-            {maxCourts} {maxCourts === 1 ? "cancha" : "canchas"}
+            Canchas activas: <strong>{activeCourts}</strong> / {maxCourts}
           </p>
 
           <div
@@ -1555,6 +2098,176 @@ const handleSaveBothCourtsResults = async () => {
           </div>
         </section>
 
+        {/* DISPONIBILIDAD Y ASISTENCIA */}
+        <section className="card">
+          <h2
+            style={{
+              margin: 0,
+              marginBottom: "0.4rem",
+              fontSize: "0.95rem",
+            }}
+          >
+            Disponibilidad y asistencia
+          </h2>
+          <p
+            style={{
+              margin: 0,
+              marginBottom: "0.6rem",
+              fontSize: "0.78rem",
+              color: "var(--muted)",
+            }}
+          >
+            Presentes: <strong>{presentPlayersCount}</strong> /{" "}
+            {totalPlayersCount} • Para {activeCourts} canchas necesitas{" "}
+            <strong>{requiredPlayersForCourts}</strong>{" "}
+            {missingPlayersForCourts > 0
+              ? `(faltan ${missingPlayersForCourts})`
+              : "(ok)"}
+          </p>
+
+          <div
+            style={{
+              display: "flex",
+              flexWrap: "wrap",
+              gap: "0.5rem",
+              marginBottom: "0.75rem",
+            }}
+          >
+            <button
+              type="button"
+              onClick={() => handleSetActiveCourts(1)}
+              disabled={savingCourts}
+              style={{
+                borderRadius: "999px",
+                border:
+                  activeCourts === 1
+                    ? "1px solid var(--accent)"
+                    : "1px solid var(--border)",
+                padding: "0.25rem 0.8rem",
+                background: activeCourts === 1 ? "var(--accent-soft)" : "var(--bg)",
+                fontSize: "0.78rem",
+                cursor: savingCourts ? "default" : "pointer",
+                fontWeight: activeCourts === 1 ? 600 : 500,
+              }}
+            >
+              1 cancha
+            </button>
+            {maxCourts >= 2 && (
+              <button
+                type="button"
+                onClick={() => handleSetActiveCourts(2)}
+                disabled={savingCourts}
+                style={{
+                  borderRadius: "999px",
+                  border:
+                    activeCourts === 2
+                      ? "1px solid var(--accent)"
+                      : "1px solid var(--border)",
+                  padding: "0.25rem 0.8rem",
+                  background:
+                    activeCourts === 2 ? "var(--accent-soft)" : "var(--bg)",
+                  fontSize: "0.78rem",
+                  cursor: savingCourts ? "default" : "pointer",
+                  fontWeight: activeCourts === 2 ? 600 : 500,
+                }}
+              >
+                2 canchas
+              </button>
+            )}
+            <span
+              style={{
+                fontSize: "0.75rem",
+                color: "var(--muted)",
+                alignSelf: "center",
+              }}
+            >
+              Máx: {maxCourts}
+            </span>
+          </div>
+
+          <div
+            style={{
+              display: "flex",
+              flexWrap: "wrap",
+              gap: "0.4rem",
+            }}
+          >
+            {allTournamentPlayers.map((pid) => {
+              const p = getPlayerDisplay(pid);
+              const status = getAttendanceStatus(pid);
+              return (
+                <div
+                  key={pid}
+                  style={{
+                    borderRadius: "0.9rem",
+                    border: "1px solid var(--border)",
+                    padding: "0.35rem 0.5rem",
+                    background: "var(--bg)",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "0.4rem",
+                  }}
+                >
+                  <span
+                    style={{
+                      width: 8,
+                      height: 8,
+                      borderRadius: "999px",
+                      background: ATTENDANCE_COLORS[status] || "var(--muted)",
+                      display: "inline-block",
+                    }}
+                  />
+                  <span
+                    style={{
+                      maxWidth: 100,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                      fontSize: "0.78rem",
+                      fontWeight: 600,
+                    }}
+                  >
+                    {shortName(p.name)}
+                  </span>
+                  <div
+                    style={{
+                      display: "flex",
+                      gap: "0.25rem",
+                    }}
+                  >
+                    {Object.values(ATTENDANCE_STATUS).map((s) => {
+                      const isActive = status === s;
+                      return (
+                        <button
+                          key={`${pid}-${s}`}
+                          type="button"
+                          onClick={() => handleSetAttendance(pid, s)}
+                          disabled={savingAttendance}
+                          style={{
+                            borderRadius: "999px",
+                            border: isActive
+                              ? `1px solid ${ATTENDANCE_COLORS[s]}`
+                              : "1px solid var(--border)",
+                            padding: "0.1rem 0.45rem",
+                            fontSize: "0.7rem",
+                            background: isActive ? "rgba(59,130,246,0.08)" : "var(--bg)",
+                            cursor: savingAttendance ? "default" : "pointer",
+                            color: isActive
+                              ? ATTENDANCE_COLORS[s]
+                              : "var(--muted)",
+                          }}
+                        >
+                          {ATTENDANCE_LABELS[s]}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+
         {/* PARTIDOS EN CANCHA */}
         <section className="card">
           <h2
@@ -1566,8 +2279,8 @@ const handleSaveBothCourtsResults = async () => {
             Partidos en cancha
           </h2>
 
-          {maxCourts >= 1 && renderCourt(1, matchCourt1)}
-          {maxCourts >= 2 && renderCourt(2, matchCourt2)}
+          {activeCourts >= 1 && renderCourt(1, matchCourt1)}
+          {activeCourts >= 2 && renderCourt(2, matchCourt2)}
 
           {/* Jugadores en espera */}
           <div
@@ -1714,7 +2427,7 @@ const handleSaveBothCourtsResults = async () => {
               }}
             >
               <Icon name="magic" size={14} color="#ffffff" />
-              Inteligente
+              Generar próxima ronda
             </button>
             <button
               type="button"
@@ -1774,7 +2487,7 @@ const handleSaveBothCourtsResults = async () => {
                   gap: "0.4rem",
                 }}
               >
-                {allTournamentPlayers.map((pid) => {
+                {presentPlayers.map((pid) => {
                   const p = getPlayerDisplay(pid);
                   const selected = customSelected.includes(pid);
                   return (
@@ -2011,7 +2724,7 @@ const handleSaveBothCourtsResults = async () => {
                 const indexInSorted = sortedPendingMatches.findIndex(
                   (x) => x.id === m.id
                 );
-                const pinnedCount = maxCourts >= 1 ? maxCourts : 0;
+                const pinnedCount = activeCourts >= 1 ? activeCourts : 0;
                 const canMoveUp = indexInSorted > pinnedCount;
                 const canMoveDown =
                   indexInSorted >= 0 &&
@@ -2232,7 +2945,7 @@ const handleSaveBothCourtsResults = async () => {
                         >
                           Cancha 1
                         </button>
-                        {maxCourts >= 2 && (
+                        {activeCourts >= 2 && (
                           <button
                             type="button"
                             onClick={() =>
@@ -2427,7 +3140,7 @@ const handleSaveBothCourtsResults = async () => {
                 type="button"
                 onClick={() => {
                   setConflictModal(null);
-                  generateSmartMatch();
+                  generateSingleMatch();
                 }}
                 style={{
                   borderRadius: "999px",
